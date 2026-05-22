@@ -20,7 +20,7 @@ set -euo pipefail
 
 TARGET_SLIDE=${1:-6028-4L-2M-2_x5}
 RUN_NAME=${2:-atlas_macenko_harmony}
-LOO_DIR=${3:-$SCRATCH/results/loo_phase_b}
+LOO_DIR=${3:-$SCRATCH/results/loo_summary}
 
 ATLAS_DIR=$SCRATCH/results/$RUN_NAME
 ANN_DIR=$SCRATCH/data/annotations
