@@ -24,7 +24,7 @@ LOO_DIR=${3:-$SCRATCH/results/loo_summary}
 
 ATLAS_DIR=$SCRATCH/results/$RUN_NAME
 ANN_DIR=$SCRATCH/data/annotations
-FEATURES_DIR=$SCRATCH/features_cache
+FEATURES_DIR=$SCRATCH/data/features_cache
 OUT_DIR=$SCRATCH/results/slide_diagnostics_${TARGET_SLIDE}
 
 mkdir -p logs
@@ -46,10 +46,11 @@ export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 
 echo "=== Pre-run checks ==="
-echo "Atlas adata:"; ls -lh "$ATLAS_DIR/adata_full.h5ad"
-echo "Atlas results:"; ls -lh "$ATLAS_DIR/results.csv"
-echo "LOO dir:"; ls "$LOO_DIR/" | head
-echo "Features cache:"; ls "$FEATURES_DIR/" | head
+echo "Atlas adata:";    ls -lh "$ATLAS_DIR/adata_full.h5ad"   2>/dev/null || echo "  NOT FOUND: $ATLAS_DIR/adata_full.h5ad"
+echo "Atlas results:";  ls -lh "$ATLAS_DIR/results.csv"        2>/dev/null || echo "  NOT FOUND: $ATLAS_DIR/results.csv"
+echo "LOO dir:";        ls "$LOO_DIR/"                  2>/dev/null | head || echo "  NOT FOUND: $LOO_DIR"
+echo "Features cache:"; ls "$FEATURES_DIR/"             2>/dev/null | head || echo "  NOT FOUND: $FEATURES_DIR (H3 will be skipped)"
+echo "Annotations:";    ls "$ANN_DIR/"                  2>/dev/null | head || echo "  NOT FOUND: $ANN_DIR (H5 will be skipped)"
 echo "===================="
 
 cd ~
