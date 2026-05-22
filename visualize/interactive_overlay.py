@@ -83,7 +83,7 @@ def build_slide_figure(
     ndpi_xs = (xs / ndpi_scale).astype(int)
     ndpi_ys = (ys / ndpi_scale).astype(int)
 
-    default_cs = _COLORSCALES[0][1]
+    default_cs = _COLORSCALES[8][1] # set default to "Jet"
 
     scatter = go.Scattergl(
         x=xs,
