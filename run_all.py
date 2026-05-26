@@ -261,7 +261,7 @@ def run_pipeline(cfg: PipelineConfig):
 
     # Imports (relative to this module)
     from .data.stain_normalization import build_normalizer, normalize_slide
-    from .features.patching import get_patches_from_array, load_roi_polygons
+    from .features.patching import get_patches_from_array, load_roi_polygons, sample_patches
     from .features.extractors import extract_features
     from .analysis.clustering import (
         fit_pca, run_umap, cluster, check_slide_independence, get_cluster_centroids,
@@ -294,6 +294,8 @@ def run_pipeline(cfg: PipelineConfig):
     all_coords_list = []
     all_slide_ids = []
     slide_names = []
+    sampling_log_rows = []
+    sampling_indices = {}
 
     # Per-slide feature cache support: model loaded lazily on first cache miss.
     all_features_list = []
@@ -346,6 +348,23 @@ def run_pipeline(cfg: PipelineConfig):
             print(f"    WARNING: No patches found — skipping")
             continue
 
+        orig_count = len(patches)
+        patches, coords, selected_idx = sample_patches(
+            patches, coords, cfg.max_patches_per_slide, cfg.patch_sample_seed, slide_name
+        )
+        was_capped = selected_idx is not None
+        if was_capped:
+            print(f"    Sampled {len(patches)} / {orig_count} patches (cap={cfg.max_patches_per_slide})")
+            sampling_indices[slide_name] = selected_idx
+        sampling_log_rows.append({
+            "slide_name": slide_name,
+            "n_extracted": orig_count,
+            "n_sampled": len(patches),
+            "was_capped": was_capped,
+            "max_patches_per_slide": cfg.max_patches_per_slide,
+            "seed": cfg.patch_sample_seed,
+        })
+
         all_patches_list.append(patches)
         all_coords_list.append(coords)
         all_slide_ids.extend([i] * len(patches))
@@ -354,7 +373,10 @@ def run_pipeline(cfg: PipelineConfig):
             cache_file = Path(cfg.features_cache_dir) / f"{slide_name}_features.npy"
             if cache_file.exists():
                 print(f"    Cache hit: {cache_file.name}")
-                all_features_list.append(np.load(cache_file))
+                cached = np.load(cache_file)
+                if selected_idx is not None:
+                    cached = cached[selected_idx]
+                all_features_list.append(cached)
             else:
                 from .features.extractors import load_model_components, extract_features_from_model
                 if not _cache_model_loaded:
@@ -517,6 +539,17 @@ def run_pipeline(cfg: PipelineConfig):
     df.to_csv(output_dir / "results.csv", index=False)
     print(f"  CSV: {output_dir / 'results.csv'}")
 
+    if sampling_log_rows:
+        sampling_df = pd.DataFrame(sampling_log_rows)
+        sampling_df.to_csv(output_dir / "patch_sampling_log.csv", index=False)
+        print(f"  Sampling log: {output_dir / 'patch_sampling_log.csv'}")
+        if sampling_indices:
+            sampling_dir = output_dir / "sampling"
+            sampling_dir.mkdir(exist_ok=True)
+            for sname, idx in sampling_indices.items():
+                np.save(sampling_dir / f"{sname}_sample_idx.npy", idx)
+            print(f"  Sampling indices: {sampling_dir}/")
+
     io.save_json(validation, output_dir / "validation.json")
     print(f"  Validation: {output_dir / 'validation.json'}")
 
@@ -630,6 +663,13 @@ Examples:
                         help="Directory for per-slide Phikon feature cache (.npy). "
                              "Features are saved on first run and loaded on subsequent runs, "
                              "avoiding redundant GPU inference across LOO runs.")
+    parser.add_argument("--max-patches-per-slide", type=int, default=None,
+                        help="Cap patches per slide after ROI filtering (None = no cap). "
+                             "Recommended: 1900 (cohort median) to prevent over-represented "
+                             "slides from dominating the pooled manifold.")
+    parser.add_argument("--patch-sample-seed", type=int, default=42,
+                        help="Base random seed for per-slide patch subsampling (default: 42). "
+                             "Combined with a slide-name-derived hash for order independence.")
 
     args = parser.parse_args()
 
@@ -676,6 +716,8 @@ Examples:
         diffmap_comps=args.diffmap_comps,
         slide_filter=slide_filter,
         features_cache_dir=args.features_cache_dir,
+        max_patches_per_slide=args.max_patches_per_slide,
+        patch_sample_seed=args.patch_sample_seed,
     )
 
     if args.convert:

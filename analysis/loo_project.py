@@ -18,6 +18,8 @@ from pathlib import Path
 
 from scipy.stats import wasserstein_distance, ks_2samp, spearmanr
 
+from ..features.patching import sample_patches
+
 
 def load_cached_features(cache_dir: Path, slide_name: str) -> np.ndarray:
     feat_file = cache_dir / f"{slide_name}_features.npy"
@@ -61,6 +63,10 @@ def main():
                         help="Full 16-slide run directory (reference in-manifold pseudotime)")
     parser.add_argument("--output-dir", type=Path, required=True,
                         help="Where to write loo_result_*.json and loo_distribution_*.png")
+    parser.add_argument("--max-patches-per-slide", type=int, default=None,
+                        help="Cap patches to this count (must match the cap used in training)")
+    parser.add_argument("--patch-sample-seed", type=int, default=42,
+                        help="Base seed for patch subsampling (must match the seed used in training)")
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -74,6 +80,12 @@ def main():
     print(f"Loading cached features for '{slide_name}'...")
     raw_features = load_cached_features(args.cache_dir, slide_name)
     print(f"  Features shape: {raw_features.shape}")
+    raw_features, _, _ = sample_patches(
+        raw_features, np.arange(len(raw_features)),
+        args.max_patches_per_slide, args.patch_sample_seed, slide_name,
+    )
+    if args.max_patches_per_slide is not None:
+        print(f"  After sampling cap {args.max_patches_per_slide}: {len(raw_features)} patches")
 
     adata_proj = projector.project(raw_features, method="knn")
     projected_pt = adata_proj.obs["pseudotime"].values.astype(float)

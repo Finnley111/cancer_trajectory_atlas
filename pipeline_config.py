@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass
@@ -45,3 +46,7 @@ class PipelineConfig:
 
     # Per-slide Phikon feature cache (None = disabled; set to a Path to enable)
     features_cache_dir: Path = None
+
+    # Per-slide patch count cap (None or 0 = no cap; applied after ROI filter, before Phikon)
+    max_patches_per_slide: Optional[int] = None
+    patch_sample_seed: int = 42

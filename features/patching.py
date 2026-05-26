@@ -182,6 +182,17 @@ def get_patches_from_array(
     return np.array(patches), np.array(coords)
 
 
+def sample_patches(patches, coords, max_n, base_seed, slide_name):
+    """Subsample patches to at most max_n, reproducibly by slide name."""
+    import hashlib
+    if max_n is None or max_n <= 0 or len(patches) <= max_n:
+        return patches, coords, None
+    name_seed = int(hashlib.md5(slide_name.encode()).hexdigest()[:8], 16)
+    rng = np.random.default_rng(int(base_seed) ^ name_seed)
+    idx = np.sort(rng.choice(len(patches), max_n, replace=False))
+    return patches[idx], coords[idx], idx
+
+
 def get_patches(
     image_path: str,
     patch_size: int = 112,

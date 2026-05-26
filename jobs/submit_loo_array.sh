@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=def-lmarti46
-#SBATCH --time=2:00:00
+#SBATCH --time=3:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --job-name=atlas_loo
@@ -45,8 +45,8 @@ if [[ $SLURM_ARRAY_TASK_ID -ge ${#SLIDES[@]} ]]; then
 fi
 
 export HELD_OUT="${SLIDES[$SLURM_ARRAY_TASK_ID]}"
-export FULL_RUN="$SCRATCH/results/atlas_none_harmony"
-export CACHE_DIR="$SCRATCH/data/features_cache"
+export FULL_RUN="${FULL_RUN:-$SCRATCH/results/atlas_none_harmony}"
+export CACHE_DIR="${CACHE_DIR:-$SCRATCH/data/features_cache}"
 
 echo "Task $SLURM_ARRAY_TASK_ID / $((${#SLIDES[@]}-1)) — held-out: $HELD_OUT"
 

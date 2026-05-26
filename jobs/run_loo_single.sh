@@ -3,9 +3,11 @@
 # Do NOT submit this directly — use submit_loo_array.sh.
 #
 # Expects these environment variables set by the array job:
-#   HELD_OUT   — stem of the held-out slide (e.g. 6027-4L-2M-1_x5)
-#   FULL_RUN   — path to the full 16-slide reference run (for in-manifold PT)
-#   CACHE_DIR  — path to feature cache directory
+#   HELD_OUT     — stem of the held-out slide (e.g. 6027-4L-2M-1_x5)
+#   FULL_RUN     — path to the full 16-slide reference run (for in-manifold PT)
+#   CACHE_DIR    — path to feature cache directory
+#   MAX_PATCHES  — per-slide patch cap (optional; omit or leave empty for no cap)
+#   SAMPLE_SEED  — base seed for patch subsampling (default: 42)
 
 set -euo pipefail
 
@@ -14,7 +16,11 @@ if [[ -z "${HELD_OUT:-}" ]]; then
     exit 1
 fi
 
-LOO_OUT="$SCRATCH/results/loo_${HELD_OUT}"
+MAX_PATCHES=${MAX_PATCHES:-}
+SAMPLE_SEED=${SAMPLE_SEED:-42}
+LOO_SUFFIX=${LOO_SUFFIX:-}
+
+LOO_OUT="$SCRATCH/results/loo_${HELD_OUT}${LOO_SUFFIX}"
 mkdir -p "$LOO_OUT"
 
 echo "=== LOO run: held-out = $HELD_OUT ==="
@@ -51,7 +57,9 @@ python -m cancer_trajectory_atlas.run_all \
     --harmony-key         section_number \
     --n-permutations      200 \
     --slides              "$TRAINING_SLIDES" \
-    --features-cache-dir  "${CACHE_DIR:-$SCRATCH/data/features_cache}"
+    --features-cache-dir  "${CACHE_DIR:-$SCRATCH/data/features_cache}" \
+    ${MAX_PATCHES:+--max-patches-per-slide "$MAX_PATCHES"} \
+    --patch-sample-seed   "$SAMPLE_SEED"
 
 echo ""
 echo "=== Phase B: projecting held-out slide ==="
@@ -62,7 +70,9 @@ python -m cancer_trajectory_atlas.analysis.loo_project \
     --held-out-slide "$HELD_OUT" \
     --cache-dir      "${CACHE_DIR:-$SCRATCH/data/features_cache}" \
     --full-run-dir   "${FULL_RUN:-$SCRATCH/results/atlas_none_harmony}" \
-    --output-dir     "$LOO_OUT"
+    --output-dir     "$LOO_OUT" \
+    ${MAX_PATCHES:+--max-patches-per-slide "$MAX_PATCHES"} \
+    --patch-sample-seed "$SAMPLE_SEED"
 
 echo ""
 echo "=== Done: $HELD_OUT ==="
