@@ -374,7 +374,7 @@ def run_pipeline(cfg: PipelineConfig):
             if cache_file.exists():
                 print(f"    Cache hit: {cache_file.name}")
                 cached = np.load(cache_file)
-                if selected_idx is not None:
+                if selected_idx is not None and len(cached) == orig_count:
                     cached = cached[selected_idx]
                 all_features_list.append(cached)
             else:
@@ -628,8 +628,8 @@ Examples:
     # NDPI conversion settings
     parser.add_argument("--ndpi-level", type=int, default=0,
                         help="NDPI pyramid level (0=full res; default: 0)")
-    parser.add_argument("--ndpi-scale", type=float, default=0.5,
-                        help="Additional downscale factor applied after level selection (default: 0.5)")
+    parser.add_argument("--ndpi-scale", type=float, default=1.0,
+                        help="Additional downscale factor applied after level selection (default: 1.0)")
 
     # Pipeline settings
     parser.add_argument("--model", type=str, default="phikon", choices=["phikon", "resnet50"],

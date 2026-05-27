@@ -15,7 +15,7 @@ class PipelineConfig:
     # NDPI conversion (only used with --convert)
     ndpi_dir: Path = None
     ndpi_level: int = 0
-    ndpi_scale: float = 0.5
+    ndpi_scale: float = 1.0
 
     # Feature embedding
     model: str = "phikon"

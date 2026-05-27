@@ -23,7 +23,7 @@ python -m cancer_trajectory_atlas.run_all \
     --ndpi-dir   $SCRATCH/data/MCF7_x5 \
     --png-dir    $SCRATCH/data/MCF7_x5_cropped \
     --ndpi-level 0 \
-    --ndpi-scale 0.5
+    --ndpi-scale 1.0
 
 echo ""
 echo "Done. PNG count:"

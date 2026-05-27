@@ -63,7 +63,7 @@ def build_slide_figure(
     slide_df: pd.DataFrame,
     png_path: Path,
     patch_size: int = 112,
-    ndpi_scale: float = 0.5,
+    ndpi_scale: float = 1.0,
 ) -> "plotly.graph_objects.Figure":
     import plotly.graph_objects as go
 
@@ -200,8 +200,8 @@ def main():
                         help="Patch size used during extraction (pixels)")
     parser.add_argument("--slides", nargs="*",
                         help="Process only these slide stems (default: all)")
-    parser.add_argument("--ndpi-scale", type=float, default=0.5,
-                        help="Scale factor used during NDPI→PNG conversion (default: 0.5)")
+    parser.add_argument("--ndpi-scale", type=float, default=1.0,
+                        help="Scale factor used during NDPI→PNG conversion (default: 1.0)")
     args = parser.parse_args()
 
     try:

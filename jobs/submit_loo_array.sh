@@ -37,6 +37,12 @@ if [[ ! -f "$SLIDES_FILE" ]]; then
     exit 1
 fi
 
+if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+    echo "ERROR: SLURM_ARRAY_TASK_ID is not set."
+    echo "Submit with: sbatch --array=0-15 jobs/submit_loo_array.sh"
+    exit 1
+fi
+
 mapfile -t SLIDES < "$SLIDES_FILE"
 
 if [[ $SLURM_ARRAY_TASK_ID -ge ${#SLIDES[@]} ]]; then

@@ -77,7 +77,7 @@ def _get_known_dimensions(png_name, ndpi_scale):
     return full_w, full_h
 
 
-def discover_slides(ndpi_scale=0.5, filter_name=None):
+def discover_slides(ndpi_scale=1.0, filter_name=None):
     png_dir = Path(PNG_DIR)
     ann_dir = Path(ANNOTATION_DIR)
 
@@ -416,8 +416,8 @@ Examples:
     parser.add_argument("--stain-method", type=str, default="reinhard",
                         choices=["reinhard", "macenko", "none"],
                         help="Stain normalization method (default: reinhard)")
-    parser.add_argument("--ndpi-scale", type=float, default=0.5,
-                        help="Downscale factor used when PNGs were created (default: 0.5)")
+    parser.add_argument("--ndpi-scale", type=float, default=1.0,
+                        help="Downscale factor used when PNGs were created (default: 1.0)")
 
     args = parser.parse_args()
     
