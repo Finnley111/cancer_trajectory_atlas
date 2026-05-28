@@ -321,10 +321,11 @@ def run_pipeline(cfg: PipelineConfig):
 
         # Load ROI polygons if annotations exist.
         roi_polys = None
+        exclude_polys = None
         ann_path = slide_entry.get("annotation")
         if ann_path is not None:
             cropped_w, cropped_h = img_arr.shape[1], img_arr.shape[0]
-            roi_polys = load_roi_polygons(
+            roi_polys, exclude_polys = load_roi_polygons(
                 ann_path,
                 coordinate_space="ratio",
                 original_full_width=slide_entry.get("original_full_width"),
@@ -332,7 +333,8 @@ def run_pipeline(cfg: PipelineConfig):
                 cropped_w=cropped_w,
                 cropped_h=cropped_h,
             )
-            print(f"    Loaded {len(roi_polys)} ROI hotspot polygons")
+            print(f"    Loaded {len(roi_polys)} ROI hotspot polygons, "
+                  f"{len(exclude_polys)} exclusion polygons")
         else:
             print(f"    No annotation — using full slide")
 
@@ -342,6 +344,7 @@ def run_pipeline(cfg: PipelineConfig):
             stride=cfg.stride,
             image_name=slide_name,
             roi_polygons=roi_polys,
+            exclude_polygons=exclude_polys,
         )
 
         if len(patches) == 0:

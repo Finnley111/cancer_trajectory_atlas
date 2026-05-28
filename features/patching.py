@@ -41,8 +41,22 @@ def load_roi_polygons(
     original_full_height: Optional[int] = None,
     cropped_w: Optional[int] = None,
     cropped_h: Optional[int] = None,
-) -> List:
-    """Load ROI polygons from JSON and convert them to pixel coordinates."""
+) -> Tuple[List, List]:
+    """Load ROI polygons from JSON, split into (include, exclude) lists.
+
+    Polygons with classification "Tumor" or no classification are treated as
+    inclusion zones (ROI hotspots).  All other named classifications
+    (e.g. "Ignore*", "Necrosis", "Region*") are treated as exclusion zones —
+    patches whose centre falls inside any exclusion polygon are dropped even
+    if they are also inside an inclusion polygon.
+
+    Returns
+    -------
+    include_polys : list of MplPath
+        Patches must be inside at least one of these to be kept.
+    exclude_polys : list of MplPath
+        Patches inside any of these are always dropped.
+    """
     import json
     from matplotlib.path import Path as MplPath
 
@@ -79,36 +93,51 @@ def load_roi_polygons(
             arr[:, 1] *= scale_h
         return arr[:, :2]
 
-    polygons = []
+    def _class_name(feat):
+        cls = feat.get("properties", {}).get("classification")
+        if cls is None:
+            return None
+        return cls.get("name") if isinstance(cls, dict) else cls
+
+    include_polys: List = []
+    exclude_polys: List = []
+
     for feat in features_list:
         geom = feat.get("geometry", {})
         geom_type = geom.get("type", "")
+        name = _class_name(feat)
+        # None (unclassified) or "Tumor" → inclusion; anything else → exclusion.
+        is_include = name is None or name == "Tumor"
 
+        rings = []
         if geom_type == "Polygon":
-            ring = scale_ring(geom["coordinates"][0])
-            if ring is not None and len(ring) >= 3:
-                polygons.append(MplPath(ring))
+            rings = [geom["coordinates"][0]]
         elif geom_type == "MultiPolygon":
-            for poly_coords in geom["coordinates"]:
-                ring = scale_ring(poly_coords[0])
-                if ring is not None and len(ring) >= 3:
-                    polygons.append(MplPath(ring))
+            rings = [poly[0] for poly in geom["coordinates"]]
+
+        for ring_coords in rings:
+            ring = scale_ring(ring_coords)
+            if ring is not None and len(ring) >= 3:
+                poly = MplPath(ring)
+                if is_include:
+                    include_polys.append(poly)
+                else:
+                    exclude_polys.append(poly)
 
     # Discard polygons whose centroid falls outside the cropped region.
     if cropped_w is not None and original_full_width is not None:
-        filtered = []
-        n_discarded = 0
-        for poly in polygons:
+        def _in_crop(poly):
             cx, cy = poly.vertices[:, 0].mean(), poly.vertices[:, 1].mean()
-            if cx <= cropped_w and cy <= (cropped_h or scale_h):
-                filtered.append(poly)
-            else:
-                n_discarded += 1
+            return cx <= cropped_w and cy <= (cropped_h or scale_h)
+
+        n_before = len(include_polys) + len(exclude_polys)
+        include_polys = [p for p in include_polys if _in_crop(p)]
+        exclude_polys = [p for p in exclude_polys if _in_crop(p)]
+        n_discarded = n_before - len(include_polys) - len(exclude_polys)
         if n_discarded > 0:
             print(f"    Discarded {n_discarded} ROI polygons outside cropped region")
-        polygons = filtered
 
-    return polygons
+    return include_polys, exclude_polys
 
 
 def _point_in_any_roi(x: float, y: float, roi_polygons: List) -> bool:
@@ -132,8 +161,14 @@ def get_patches_from_array(
     white_frac: float = 0.70,
     image_name: str = "<array>",
     roi_polygons: Optional[List] = None,
+    exclude_polygons: Optional[List] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Extract filtered tissue patches from an in-memory RGB image."""
+    """Extract filtered tissue patches from an in-memory RGB image.
+
+    roi_polygons     — inclusion zones: patch centre must be inside at least one.
+    exclude_polygons — exclusion zones: patch centre inside any of these is dropped,
+                       even if it is also inside an inclusion polygon.
+    """
     h, w = img_arr.shape[:2]
     patches, coords = [], []
 
@@ -143,17 +178,24 @@ def get_patches_from_array(
 
     half = patch_size / 2.0
     n_roi_rejected = 0
+    n_exclude_rejected = 0
 
     with tqdm(total=total, desc=f"Patching {image_name}") as pbar:
         for y in y_steps:
             for x in x_steps:
                 pbar.update(1)
+                cx, cy = x + half, y + half
 
-                # ROI containment check on the patch center.
+                # ROI inclusion check.
                 if roi_polygons is not None:
-                    cx, cy = x + half, y + half
                     if not _point_in_any_roi(cx, cy, roi_polygons):
                         n_roi_rejected += 1
+                        continue
+
+                # Exclusion check (Ignore*, Necrosis, etc.).
+                if exclude_polygons:
+                    if _point_in_any_roi(cx, cy, exclude_polygons):
+                        n_exclude_rejected += 1
                         continue
 
                 patch_arr = img_arr[y : y + patch_size, x : x + patch_size]
@@ -172,6 +214,8 @@ def get_patches_from_array(
 
     if roi_polygons is not None:
         print(f"  ROI filter: {n_roi_rejected} patches outside hotspots")
+    if n_exclude_rejected:
+        print(f"  Exclude filter: {n_exclude_rejected} patches inside Ignore/Necrosis regions")
 
     if total > 0:
         print(f"  Kept {len(patches)} / {total} patches ({len(patches)/total:.1%})")

@@ -249,9 +249,10 @@ def run_one_slide(slide_cfg, stain_normalizer, out_root, leiden_resolution):
 
     # ROI polygons (if annotation exists)
     roi_polys = None
+    exclude_polys = None
     ann_path = slide_cfg.get("annotation")
     if ann_path is not None:
-        roi_polys = load_roi_polygons(
+        roi_polys, exclude_polys = load_roi_polygons(
             ann_path,
             coordinate_space="ratio",
             original_full_width=slide_cfg.get("original_full_width"),
@@ -259,7 +260,7 @@ def run_one_slide(slide_cfg, stain_normalizer, out_root, leiden_resolution):
             cropped_w=img_arr.shape[1],
             cropped_h=img_arr.shape[0],
         )
-        print(f"  ROIs: {len(roi_polys)} polygons")
+        print(f"  ROIs: {len(roi_polys)} include, {len(exclude_polys)} exclude polygons")
     else:
         print(f"  No annotation — using full slide")
 
@@ -270,6 +271,7 @@ def run_one_slide(slide_cfg, stain_normalizer, out_root, leiden_resolution):
         stride=STRIDE,
         image_name=name,
         roi_polygons=roi_polys,
+        exclude_polygons=exclude_polys,
     )
     if len(patches) < 50:
         print(f"  SKIP: only {len(patches)} patches — too few for trajectory")
