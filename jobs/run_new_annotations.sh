@@ -83,7 +83,7 @@ case "$RUN_TYPE" in
         --clustering-method leiden                  \
         --leiden-resolution 0.5                     \
         --n-permutations    1000                    \
-        --min-roi-coverage  0.5
+        --min-roi-coverage  0.75
 
     _postprocess "$OUT_DIR"
     ;;
@@ -105,7 +105,7 @@ case "$RUN_TYPE" in
         --clustering-method leiden                  \
         --leiden-resolution 0.5                     \
         --n-permutations    1000                    \
-        --min-roi-coverage  0.5
+        --min-roi-coverage  0.75
 
     _postprocess "$OUT_DIR"
     ;;
@@ -131,7 +131,7 @@ case "$RUN_TYPE" in
         --clustering-method leiden                  \
         --leiden-resolution 0.5                     \
         --n-permutations    1000                    \
-        --min-roi-coverage  0.5
+        --min-roi-coverage  0.75
 
     _postprocess "$OUT_DIR"
     ;;
@@ -142,7 +142,7 @@ case "$RUN_TYPE" in
         --annotation-dir    "$ANN_DIR"               \
         --output-dir        "$OUT_DIR"               \
         --ndpi-scale        1.0                      \
-        --min-roi-coverage  0.5
+        --min-roi-coverage  0.75
 
     for SLIDE_DIR in "$OUT_DIR"/*/; do
         SLIDE_CSV="$SLIDE_DIR/results.csv"

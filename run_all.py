@@ -378,7 +378,15 @@ def run_pipeline(cfg: PipelineConfig):
             if cache_file.exists():
                 print(f"    Cache hit: {cache_file.name}")
                 cached = np.load(cache_file)
-                if selected_idx is not None and len(cached) == orig_count:
+                if len(cached) != orig_count:
+                    raise RuntimeError(
+                        f"Feature cache size mismatch for '{slide_name}': "
+                        f"cache has {len(cached)} features but {orig_count} patches were extracted.\n"
+                        "The cache is stale (patch extraction settings changed). "
+                        "Delete the stale .npy file and re-run with GPU to rebuild it, "
+                        "or re-run run_cache_population.sh with the current extraction settings."
+                    )
+                if selected_idx is not None:
                     cached = cached[selected_idx]
                 all_features_list.append(cached)
             else:

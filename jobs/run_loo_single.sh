@@ -64,12 +64,35 @@ python -m cancer_trajectory_atlas.run_all \
 echo ""
 echo "=== Phase B: projecting held-out slide ==="
 
-# Phase B — project held-out slide onto the LOO manifold
+FULL_RUN_DIR="${FULL_RUN:-$SCRATCH/results/atlas_none_harmony}"
+
+# Phase B requires the reference full-run results.csv.
+# If it doesn't exist yet (reference run still pending), skip Phase B with a clear message.
+if [[ ! -f "$FULL_RUN_DIR/results.csv" ]]; then
+    echo ""
+    echo "WARNING: Phase B skipped — reference run results.csv not found at:"
+    echo "  $FULL_RUN_DIR/results.csv"
+    echo ""
+    echo "Phase A projector saved to: $LOO_OUT/projector"
+    echo "Re-run Phase B once the reference run finishes:"
+    echo "  python -m cancer_trajectory_atlas.analysis.loo_project \\"
+    echo "      --projector-dir  $LOO_OUT/projector \\"
+    echo "      --held-out-slide \"$HELD_OUT\" \\"
+    echo "      --cache-dir      \"${CACHE_DIR:-\$SCRATCH/data/features_cache}\" \\"
+    echo "      --full-run-dir   \"$FULL_RUN_DIR\" \\"
+    echo "      --output-dir     \"$LOO_OUT\" \\"
+    if [[ -n "$MAX_PATCHES" ]]; then
+        echo "      --max-patches-per-slide $MAX_PATCHES \\"
+    fi
+    echo "      --patch-sample-seed $SAMPLE_SEED"
+    exit 0
+fi
+
 python -m cancer_trajectory_atlas.analysis.loo_project \
     --projector-dir  "$LOO_OUT/projector" \
     --held-out-slide "$HELD_OUT" \
     --cache-dir      "${CACHE_DIR:-$SCRATCH/data/features_cache}" \
-    --full-run-dir   "${FULL_RUN:-$SCRATCH/results/atlas_none_harmony}" \
+    --full-run-dir   "$FULL_RUN_DIR" \
     --output-dir     "$LOO_OUT" \
     ${MAX_PATCHES:+--max-patches-per-slide "$MAX_PATCHES"} \
     --patch-sample-seed "$SAMPLE_SEED"

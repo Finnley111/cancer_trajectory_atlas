@@ -32,6 +32,20 @@ def _has_tissue_hsv(patch_pil: Image.Image,
 
 # ROI helpers
 
+def _make_path(outer: np.ndarray, inner_rings: list):
+    """Return an MplPath that correctly handles inner rings (holes) as a compound path."""
+    from matplotlib.path import Path as MplPath
+    if not inner_rings:
+        return MplPath(outer)
+    all_rings = [outer] + inner_rings
+    verts, codes = [], []
+    for ring in all_rings:
+        n = len(ring)
+        verts.append(ring)
+        codes += [MplPath.MOVETO] + [MplPath.LINETO] * (n - 2) + [MplPath.CLOSEPOLY]
+    return MplPath(np.concatenate(verts, axis=0), np.array(codes, dtype=np.uint8))
+
+
 def load_roi_polygons(
     annotation_path: str,
     coordinate_space: str = "ratio",
@@ -109,20 +123,23 @@ def load_roi_polygons(
         # None (unclassified) or "Tumor" → inclusion; anything else → exclusion.
         is_include = name is None or name == "Tumor"
 
-        rings = []
-        if geom_type == "Polygon":
-            rings = [geom["coordinates"][0]]
-        elif geom_type == "MultiPolygon":
-            rings = [poly[0] for poly in geom["coordinates"]]
-
-        for ring_coords in rings:
-            ring = scale_ring(ring_coords)
-            if ring is not None and len(ring) >= 3:
-                poly = MplPath(ring)
+        def _add(all_rings_list):
+            for all_rings in all_rings_list:
+                outer = scale_ring(all_rings[0])
+                if outer is None or len(outer) < 3:
+                    continue
+                inner = [r for rc in all_rings[1:]
+                         if (r := scale_ring(rc)) is not None and len(r) >= 3]
+                path = _make_path(outer, inner)
                 if is_include:
-                    include_polys.append(poly)
+                    include_polys.append(path)
                 else:
-                    exclude_polys.append(poly)
+                    exclude_polys.append(path)
+
+        if geom_type == "Polygon":
+            _add([geom["coordinates"]])
+        elif geom_type == "MultiPolygon":
+            _add(geom["coordinates"])
 
     # Discard polygons whose centroid falls outside the cropped region.
     if cropped_w is not None and original_full_width is not None:
@@ -148,12 +165,16 @@ def _find_containing_roi(x: float, y: float, roi_polygons: List):
     return None
 
 
-def _coverage_in_polygon(x: float, y: float, patch_size: int, polygon) -> float:
-    """Fraction of a 3x3 sample grid (at 1/4, 1/2, 3/4 offsets) inside polygon."""
+def _coverage_in_rois(x: float, y: float, patch_size: int, roi_polygons: List) -> float:
+    """Fraction of a 3x3 sample grid (at 1/4, 1/2, 3/4 offsets) inside ANY ROI polygon.
+
+    Checks all polygons rather than just the containing one so that grid points
+    landing in completely unannotated territory are correctly counted as outside.
+    """
     step = patch_size / 4.0
     inside = sum(
         1 for gi in range(1, 4) for gj in range(1, 4)
-        if polygon.contains_point((x + gi * step, y + gj * step))
+        if _find_containing_roi(x + gi * step, y + gj * step, roi_polygons) is not None
     )
     return inside / 9
 
@@ -209,7 +230,7 @@ def get_patches_from_array(
                         n_roi_rejected += 1
                         continue
                     if min_roi_coverage is not None:
-                        if _coverage_in_polygon(x, y, patch_size, containing) < min_roi_coverage:
+                        if _coverage_in_rois(x, y, patch_size, roi_polygons) < min_roi_coverage:
                             n_coverage_rejected += 1
                             continue
 
