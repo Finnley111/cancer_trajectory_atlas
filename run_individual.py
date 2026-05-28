@@ -60,6 +60,7 @@ PATCH_SIZE = None
 STRIDE = None
 LEIDEN_RESOLUTION = None
 STAIN_NORMALIZATION = None
+MIN_ROI_COVERAGE = None
 
 
 # Slide discovery
@@ -272,6 +273,7 @@ def run_one_slide(slide_cfg, stain_normalizer, out_root, leiden_resolution):
         image_name=name,
         roi_polygons=roi_polys,
         exclude_polygons=exclude_polys,
+        min_roi_coverage=MIN_ROI_COVERAGE,
     )
     if len(patches) < 50:
         print(f"  SKIP: only {len(patches)} patches — too few for trajectory")
@@ -420,11 +422,14 @@ Examples:
                         help="Stain normalization method (default: reinhard)")
     parser.add_argument("--ndpi-scale", type=float, default=1.0,
                         help="Downscale factor used when PNGs were created (default: 1.0)")
+    parser.add_argument("--min-roi-coverage", type=float, default=None,
+                        help="Minimum fraction of a patch inside its ROI polygon (3x3 grid). "
+                             "Default: None. Use 0.5 to drop boundary patches.")
 
     args = parser.parse_args()
-    
+
     # Set global variables from CLI arguments
-    global PNG_DIR, ANNOTATION_DIR, OUTPUT_DIR, MODEL, PATCH_SIZE, STRIDE, LEIDEN_RESOLUTION, STAIN_NORMALIZATION
+    global PNG_DIR, ANNOTATION_DIR, OUTPUT_DIR, MODEL, PATCH_SIZE, STRIDE, LEIDEN_RESOLUTION, STAIN_NORMALIZATION, MIN_ROI_COVERAGE
     PNG_DIR = args.png_dir
     ANNOTATION_DIR = args.annotation_dir
     OUTPUT_DIR = args.output_dir
@@ -433,6 +438,7 @@ Examples:
     STRIDE = args.stride
     LEIDEN_RESOLUTION = args.leiden_resolution
     STAIN_NORMALIZATION = args.stain_method
+    MIN_ROI_COVERAGE = args.min_roi_coverage
 
     slides = discover_slides(ndpi_scale=args.ndpi_scale, filter_name=args.slide)
     out_root = Path(OUTPUT_DIR)

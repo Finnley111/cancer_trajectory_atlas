@@ -345,6 +345,7 @@ def run_pipeline(cfg: PipelineConfig):
             image_name=slide_name,
             roi_polygons=roi_polys,
             exclude_polygons=exclude_polys,
+            min_roi_coverage=cfg.min_roi_coverage,
         )
 
         if len(patches) == 0:
@@ -673,6 +674,10 @@ Examples:
     parser.add_argument("--patch-sample-seed", type=int, default=42,
                         help="Base random seed for per-slide patch subsampling (default: 42). "
                              "Combined with a slide-name-derived hash for order independence.")
+    parser.add_argument("--min-roi-coverage", type=float, default=None,
+                        help="Minimum fraction of a patch that must lie inside an ROI polygon "
+                             "(3x3 grid check). Default: None (centre-point only). "
+                             "Use 0.5 to drop boundary patches that are mostly outside the annotation.")
 
     args = parser.parse_args()
 
@@ -721,6 +726,7 @@ Examples:
         features_cache_dir=args.features_cache_dir,
         max_patches_per_slide=args.max_patches_per_slide,
         patch_sample_seed=args.patch_sample_seed,
+        min_roi_coverage=args.min_roi_coverage,
     )
 
     if args.convert:

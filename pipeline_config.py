@@ -50,3 +50,8 @@ class PipelineConfig:
     # Per-slide patch count cap (None or 0 = no cap; applied after ROI filter, before Phikon)
     max_patches_per_slide: Optional[int] = None
     patch_sample_seed: int = 42
+
+    # Minimum fraction of the patch area that must lie inside an ROI polygon.
+    # None = centre-point check only (original behaviour).
+    # 0.5 = drop patches where more than half the area is outside the annotation.
+    min_roi_coverage: Optional[float] = None

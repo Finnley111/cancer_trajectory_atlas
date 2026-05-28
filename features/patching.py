@@ -140,12 +140,22 @@ def load_roi_polygons(
     return include_polys, exclude_polys
 
 
-def _point_in_any_roi(x: float, y: float, roi_polygons: List) -> bool:
-    """Check whether a point falls inside any ROI polygon."""
+def _find_containing_roi(x: float, y: float, roi_polygons: List):
+    """Return the first polygon in roi_polygons that contains (x, y), or None."""
     for poly in roi_polygons:
         if poly.contains_point((x, y)):
-            return True
-    return False
+            return poly
+    return None
+
+
+def _coverage_in_polygon(x: float, y: float, patch_size: int, polygon) -> float:
+    """Fraction of a 3x3 sample grid (at 1/4, 1/2, 3/4 offsets) inside polygon."""
+    step = patch_size / 4.0
+    inside = sum(
+        1 for gi in range(1, 4) for gj in range(1, 4)
+        if polygon.contains_point((x + gi * step, y + gj * step))
+    )
+    return inside / 9
 
 
 # Main extraction
@@ -162,12 +172,17 @@ def get_patches_from_array(
     image_name: str = "<array>",
     roi_polygons: Optional[List] = None,
     exclude_polygons: Optional[List] = None,
+    min_roi_coverage: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Extract filtered tissue patches from an in-memory RGB image.
 
     roi_polygons     — inclusion zones: patch centre must be inside at least one.
-    exclude_polygons — exclusion zones: patch centre inside any of these is dropped,
-                       even if it is also inside an inclusion polygon.
+    exclude_polygons — exclusion zones (Ignore*, Necrosis, etc.): patches whose
+                       centre falls inside any of these are always dropped.
+    min_roi_coverage — if set, patches where less than this fraction of a 3x3
+                       sample grid lies inside the containing ROI polygon are
+                       dropped (catches boundary patches that are mostly outside
+                       the annotation). None = centre-point check only.
     """
     h, w = img_arr.shape[:2]
     patches, coords = [], []
@@ -179,6 +194,7 @@ def get_patches_from_array(
     half = patch_size / 2.0
     n_roi_rejected = 0
     n_exclude_rejected = 0
+    n_coverage_rejected = 0
 
     with tqdm(total=total, desc=f"Patching {image_name}") as pbar:
         for y in y_steps:
@@ -186,15 +202,20 @@ def get_patches_from_array(
                 pbar.update(1)
                 cx, cy = x + half, y + half
 
-                # ROI inclusion check.
+                # ROI inclusion check + optional coverage filter.
                 if roi_polygons is not None:
-                    if not _point_in_any_roi(cx, cy, roi_polygons):
+                    containing = _find_containing_roi(cx, cy, roi_polygons)
+                    if containing is None:
                         n_roi_rejected += 1
                         continue
+                    if min_roi_coverage is not None:
+                        if _coverage_in_polygon(x, y, patch_size, containing) < min_roi_coverage:
+                            n_coverage_rejected += 1
+                            continue
 
                 # Exclusion check (Ignore*, Necrosis, etc.).
                 if exclude_polygons:
-                    if _point_in_any_roi(cx, cy, exclude_polygons):
+                    if _find_containing_roi(cx, cy, exclude_polygons) is not None:
                         n_exclude_rejected += 1
                         continue
 
@@ -214,6 +235,8 @@ def get_patches_from_array(
 
     if roi_polygons is not None:
         print(f"  ROI filter: {n_roi_rejected} patches outside hotspots")
+    if n_coverage_rejected:
+        print(f"  Coverage filter: {n_coverage_rejected} patches below {min_roi_coverage:.0%} ROI coverage")
     if n_exclude_rejected:
         print(f"  Exclude filter: {n_exclude_rejected} patches inside Ignore/Necrosis regions")
 
