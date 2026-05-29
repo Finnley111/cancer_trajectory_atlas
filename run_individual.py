@@ -354,7 +354,8 @@ def run_one_slide(slide_cfg, stain_normalizer, out_root, leiden_resolution):
     plot_pseudotime_histogram(pseudotime, out_dir / "pseudotime_histogram.png")
 
     # 7) Spatial cluster scatter (alongside the heatmap, easy to compare)
-    viz.plot_spatial_clusters(coords, labels, slide_ids, out_dir, prefix="spatial_clusters")
+    viz.plot_spatial_clusters(coords, labels, slide_ids, out_dir, prefix="spatial_clusters",
+                              slide_name_map={0: name}, pseudotime=pseudotime)
 
     # CSV results
     import pandas as pd

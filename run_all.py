@@ -450,7 +450,6 @@ def run_pipeline(cfg: PipelineConfig):
     if X_umap is not None:
         viz.plot_umap_clusters(X_umap, cluster_labels, fig_dir / "fig1_umap_clusters.png")
         viz.plot_umap_by_slide(X_umap, slide_ids, fig_dir / "qc_umap_by_slide.png")
-    viz.plot_spatial_clusters(all_coords, cluster_labels, slide_ids, fig_dir)
 
     if len(centroids) > 0:
         viz.plot_cluster_patch_grid(
@@ -493,7 +492,9 @@ def run_pipeline(cfg: PipelineConfig):
     if X_umap is not None:
         viz.plot_umap_pseudotime(X_umap, pseudotime, fig_dir / "fig4_umap_pseudotime.png")
     viz.plot_pseudotime_violins(pseudotime, cluster_labels, fig_dir / "fig5_pt_violins.png")
-    viz.plot_spatial_pseudotime(all_coords, pseudotime, slide_ids, fig_dir)
+    viz.plot_spatial_clusters(all_coords, cluster_labels, slide_ids, fig_dir,
+                              slide_name_map=dict(enumerate(slide_names)),
+                              pseudotime=pseudotime)
 
     if "X_diffmap" in adata.obsm and adata.obsm["X_diffmap"].shape[1] >= 3:
         viz.plot_3d_manifold(

@@ -81,25 +81,64 @@ def plot_cluster_patch_grid(
 
 # Spatial cluster maps
 
-def plot_spatial_clusters(coords, cluster_labels, slide_ids, save_dir, prefix="spatial_clusters"):
+def plot_spatial_clusters(coords, cluster_labels, slide_ids, save_dir,
+                          prefix="spatial_clusters", slide_name_map=None,
+                          pseudotime=None):
+    """Plot per-slide spatial cluster maps with a discrete legend.
+
+    slide_name_map: optional dict mapping integer sid -> display name string.
+                   Falls back to str(sid) if None or key missing.
+    pseudotime:    if provided, appends a side-by-side pseudotime panel per slide.
+    """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    unique_slides = np.unique(slide_ids)
-    cmap = plt.cm.get_cmap("tab20")
+    # Build a consistent color assignment from the full label set so cluster N
+    # is always the same color regardless of which slide is being plotted.
+    unique_clusters = sorted(int(c) for c in set(cluster_labels) if c != -1)
+    n_clusters = len(unique_clusters)
+    cmap = plt.cm.get_cmap("tab10" if n_clusters <= 10 else "tab20", n_clusters)
+    cluster_to_idx = {c: i for i, c in enumerate(unique_clusters)}
 
-    for sid in unique_slides:
+    for sid in np.unique(slide_ids):
         mask = slide_ids == sid
-        fig, ax = plt.subplots(figsize=(10, 10))
-        sc = ax.scatter(
-            coords[mask, 0], coords[mask, 1],
-            c=cluster_labels[mask].astype(float),
-            s=15, cmap="tab20", marker="s", alpha=0.8,
-        )
-        ax.invert_yaxis()
+        slide_name = (slide_name_map or {}).get(int(sid), str(sid))
+
+        n_panels = 2 if pseudotime is not None else 1
+        fig, axes = plt.subplots(1, n_panels, figsize=(10 * n_panels, 10))
+        if n_panels == 1:
+            axes = [axes]
+
+        # Cluster panel — one scatter call per cluster for a clean discrete legend.
+        ax = axes[0]
+        for c in unique_clusters:
+            cmask = mask & (cluster_labels == c)
+            if not cmask.any():
+                continue
+            ax.scatter(coords[cmask, 0], coords[cmask, 1],
+                       color=cmap(cluster_to_idx[c]), s=15, marker="s", alpha=0.8,
+                       label=f"Cluster {c}")
+        ax.invert_yaxis()  # image coords: y increases downward (origin top-left)
         ax.set_aspect("equal")
-        ax.set_title(f"Spatial Clusters — Slide {sid}")
-        plt.colorbar(sc, ax=ax, label="Cluster")
+        ax.set_title(f"Spatial Clusters — {slide_name}")
+        ax.set_xlabel("X (pixels)")
+        ax.set_ylabel("Y (pixels)")
+        ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0,
+                  markerscale=2, fontsize=9, title="Clusters")
+
+        # Pseudotime panel (optional side-by-side).
+        if pseudotime is not None:
+            ax2 = axes[1]
+            sc = ax2.scatter(coords[mask, 0], coords[mask, 1], c=pseudotime[mask],
+                             s=15, cmap="viridis", marker="s", vmin=0, vmax=1)
+            ax2.invert_yaxis()
+            ax2.set_aspect("equal")
+            ax2.set_title(f"Spatial Pseudotime — {slide_name}")
+            ax2.set_xlabel("X (pixels)")
+            ax2.set_ylabel("Y (pixels)")
+            plt.colorbar(sc, ax=ax2, label="Pseudotime", shrink=0.8, pad=0.02)
+
+        plt.tight_layout()
         fname = save_dir / f"{prefix}_{sid}.png"
         plt.savefig(fname, dpi=150, bbox_inches="tight")
         plt.close()
