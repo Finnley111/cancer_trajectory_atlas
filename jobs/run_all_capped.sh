@@ -30,7 +30,7 @@ OUT_NAME="atlas_none_harmony_cap${MAX_PATCHES}"
 CACHE_DIR=$SCRATCH/data/features_cache
 
 PNG_DIR=$SCRATCH/data/MCF7_x5_cropped
-ANN_DIR=~/cancer_trajectory_atlas/data/annotations
+ANN_DIR=~/cancer_trajectory_atlas/data/annotations_ratio
 OUT_DIR=$SCRATCH/results/$OUT_NAME
 
 mkdir -p logs

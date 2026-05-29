@@ -45,7 +45,7 @@ cd ~
 python -m cancer_trajectory_atlas.run_all \
     --run \
     --png-dir             $SCRATCH/data/MCF7_x5_cropped \
-    --annotation-dir      $SCRATCH/data/annotations \
+    --annotation-dir      ~/cancer_trajectory_atlas/data/annotations_ratio \
     --output-dir          "$LOO_OUT" \
     --stain-method        none \
     --model               phikon \

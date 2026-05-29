@@ -25,7 +25,7 @@ export HF_HUB_OFFLINE=1
 
 echo "=== Pre-run check ==="
 echo "PNG dir:"; ls $SCRATCH/data/MCF7_x5_cropped/*.png | head
-echo "Annotations:"; ls $SCRATCH/data/annotations/ | head
+echo "Annotations:"; ls ~/cancer_trajectory_atlas/data/annotations_ratio/ | head
 echo "===================="
 
 cd ~
@@ -33,7 +33,7 @@ cd ~
 python -m cancer_trajectory_atlas.run_all \
     --run \
     --png-dir             $SCRATCH/data/MCF7_x5_cropped \
-    --annotation-dir      $SCRATCH/data/annotations \
+    --annotation-dir      ~/cancer_trajectory_atlas/data/annotations_ratio \
     --output-dir          $SCRATCH/results/atlas_none_harmony \
     --stain-method        none \
     --model               phikon \
