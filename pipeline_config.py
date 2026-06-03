@@ -55,3 +55,8 @@ class PipelineConfig:
     # None = centre-point check only (original behaviour).
     # 0.5 = drop patches where more than half the area is outside the annotation.
     min_roi_coverage: Optional[float] = None
+
+    # Root cluster for diffusion pseudotime.
+    # None = auto-select cluster "0" (always wrong on first run; inspect
+    # fig2_cluster_patches.png then re-run with the correct value).
+    root_cluster: Optional[str] = None

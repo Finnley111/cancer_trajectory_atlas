@@ -462,12 +462,21 @@ def run_pipeline(cfg: PipelineConfig):
     print("PHASE 4: Diffusion Pseudotime")
     print(f"{'='*60}")
 
-    # Auto root: pick the first valid cluster and override it after inspection.
+    # Root cluster selection.
     valid_clusters = sorted([c for c in set(cluster_labels) if c != -1])
-    root_cluster = str(valid_clusters[0])
-    print(f"  Auto root cluster: {root_cluster}")
-    print(f"  IMPORTANT: Inspect fig2_cluster_patches.png after this run.")
-    print(f"  Set ROOT_CLUSTER to the most organized cluster, then re-run.\n")
+    if cfg.root_cluster is not None:
+        root_cluster = str(cfg.root_cluster)
+        if int(root_cluster) not in valid_clusters:
+            print(f"  WARNING: --root-cluster {root_cluster} not in valid clusters "
+                  f"{valid_clusters}. Falling back to cluster 0.")
+            root_cluster = str(valid_clusters[0])
+        else:
+            print(f"  Root cluster: {root_cluster} (from --root-cluster)")
+    else:
+        root_cluster = str(valid_clusters[0])
+        print(f"  Auto root cluster: {root_cluster}")
+        print(f"  IMPORTANT: Inspect fig2_cluster_patches.png after this run.")
+        print(f"  Re-run with --root-cluster N to anchor pseudotime biologically.\n")
 
     adata = build_adata(X_embed, cluster_labels, slide_ids, X_umap)
 
@@ -687,6 +696,10 @@ Examples:
                         help="Minimum fraction of a patch that must lie inside an ROI polygon "
                              "(3x3 grid check). Default: None (centre-point only). "
                              "Use 0.5 to drop boundary patches that are mostly outside the annotation.")
+    parser.add_argument("--root-cluster", type=int, default=None,
+                        help="Cluster to use as pseudotime root (most organized morphology). "
+                             "Default: None (auto-selects cluster 0, always wrong on first run). "
+                             "Inspect fig2_cluster_patches.png then re-run with the correct cluster.")
 
     args = parser.parse_args()
 
@@ -736,6 +749,7 @@ Examples:
         max_patches_per_slide=args.max_patches_per_slide,
         patch_sample_seed=args.patch_sample_seed,
         min_roi_coverage=args.min_roi_coverage,
+        root_cluster=str(args.root_cluster) if args.root_cluster is not None else None,
     )
 
     if args.convert:

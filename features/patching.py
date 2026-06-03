@@ -58,11 +58,33 @@ def load_roi_polygons(
 ) -> Tuple[List, List]:
     """Load ROI polygons from JSON, split into (include, exclude) lists.
 
-    Polygons with classification "Tumor" or no classification are treated as
-    inclusion zones (ROI hotspots).  All other named classifications
-    (e.g. "Ignore*", "Necrosis", "Region*") are treated as exclusion zones —
-    patches whose centre falls inside any exclusion polygon are dropped even
-    if they are also inside an inclusion polygon.
+    Coordinate system
+    -----------------
+    Three spaces exist in this pipeline:
+
+    1. Full-NDPI pixel space — width = NDPI level-0 dimension (includes BOTH
+       slide copies side by side). ``original_full_width`` stores this value.
+
+    2. Cropped-PNG pixel space — width = original_full_width // 2 (left half
+       only). Patch (x, y) coords from get_patches_from_array live here.
+
+    3. Ratio space — coordinates in [0, 1] relative to full-NDPI dimensions.
+       QuPath annotates the left half of the NDPI, so left-half annotation
+       x-values are in [0, 0.5] in ratio space.
+
+    When coordinate_space="ratio":
+        polygon x *= original_full_width  →  full-NDPI pixel space
+        Left-half annotations therefore land in [0, original_full_width/2]
+        which equals [0, cropped_width].  This is the SAME as patch x-space,
+        so no further offset is needed.
+
+    Right-half polygons (centroid x > cropped_w) are discarded; they would
+    correspond to the duplicate slide copy that is cropped out.
+
+    Classification rules
+    --------------------
+    "Tumor" or unclassified → inclusion zone.
+    Any other name (Ignore*, Necrosis, Region*, …) → exclusion zone.
 
     Returns
     -------

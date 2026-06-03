@@ -6,13 +6,12 @@ Phase B (loo_project.py) never ran because the projector code didn't exist
 on Narval when the array job was submitted.
 
 Usage (run from ~ on Narval, after git pull):
-    python ~/cancer_trajectory_atlas/jobs/recover_loo_phase_b.py \
+    python -m cancer_trajectory_atlas.analysis.recover_loo \
         --loo-root       $SCRATCH/results \
         --cache-dir      $SCRATCH/data/features_cache \
         --full-run-dir   $SCRATCH/results/atlas_none_harmony
 """
 import argparse
-import glob
 import pickle
 import re
 import sys
@@ -156,10 +155,10 @@ def run_phase_b(loo_dir: Path, slide_name: str, cache_dir: Path, full_run_dir: P
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        from scipy.stats import gaussian_kde
 
         fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
-        # Left: paired scatter
         ax = axes[0]
         ax.scatter(inmanifold_pt, projected_pt, s=1, alpha=0.3, rasterized=True)
         ax.plot([0, 1], [0, 1], "r--", linewidth=1, label="y=x")
@@ -168,8 +167,6 @@ def run_phase_b(loo_dir: Path, slide_name: str, cache_dir: Path, full_run_dir: P
         ax.set_title(f"Paired patch pseudotime\nSpearman ρ={spearman_rho:.3f}  p={spearman_p:.2e}")
         ax.legend(fontsize=8)
 
-        # Right: KDE overlay (distribution comparison)
-        from scipy.stats import gaussian_kde
         ax2 = axes[1]
         x = np.linspace(0, 1, 300)
         ax2.fill_between(x, gaussian_kde(inmanifold_pt)(x), alpha=0.45,
@@ -221,14 +218,12 @@ def main():
         print(f"Processing: {slide_name}")
 
         try:
-            # Step 1: build projector from Phase A artifacts
             projector_dir = loo_dir / "projector"
             if projector_dir.exists() and args.skip_projector_build:
                 print(f"  Projector exists — skipping build (--skip-projector-build).")
             else:
                 build_projector_from_artifacts(loo_dir)
 
-            # Step 2: project held-out slide and compute metrics
             result_file = loo_dir / f"loo_result_{slide_name}.json"
             if result_file.exists():
                 print(f"  loo_result already exists — skipping Phase B.")
