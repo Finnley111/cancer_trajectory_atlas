@@ -63,7 +63,7 @@ python -m cancer_trajectory_atlas.run_all \
     --n-permutations        10 \
     --diffmap-neighbors     10 \
     --diffmap-comps         5 \
-    --features-cache-dir    "$CACHE_DIR"
+    --features-cache-dir    /scratch/finnley1/data/smoke_test_cache
 
 # ── Step 2: LOO training run (train on SLIDE1 only) ──────────────────────────
 # Exercises: single-slide atlas path, projector serialisation.
@@ -85,7 +85,7 @@ python -m cancer_trajectory_atlas.run_all \
     --n-permutations        10 \
     --diffmap-neighbors     10 \
     --diffmap-comps         5 \
-    --features-cache-dir    "$CACHE_DIR"
+    --features-cache-dir    /scratch/finnley1/data/smoke_test_cache
 
 # ── Step 3: LOO Phase B — project SLIDE2 onto 1-slide manifold ───────────────
 # Exercises: AtlasProjector.load(), project(method="knn"),
@@ -96,7 +96,7 @@ echo "--- Step 3: LOO projection (knn) ---"
 python -m cancer_trajectory_atlas.analysis.loo_project \
     --projector-dir         "$SMOKE_DIR/loo_train/projector" \
     --held-out-slide        "$SLIDE2" \
-    --cache-dir             "$CACHE_DIR" \
+    --cache-dir             "/scratch/finnley1/data/smoke_test_cache" \
     --full-run-dir          "$SMOKE_DIR/ref" \
     --output-dir            "$SMOKE_DIR/loo_train" \
     --max-patches-per-slide $CAP \
