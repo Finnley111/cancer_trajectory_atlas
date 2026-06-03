@@ -62,7 +62,6 @@ python -m cancer_trajectory_atlas.run_all \
     --max-patches-per-slide $CAP \
     --n-permutations        10 \
     --diffmap-neighbors     10 \
-    --diffmap-comps         5 \
     --features-cache-dir    /scratch/finnley1/data/smoke_test_cache
 
 # ── Step 2: LOO training run (train on SLIDE1 only) ──────────────────────────
@@ -84,7 +83,6 @@ python -m cancer_trajectory_atlas.run_all \
     --max-patches-per-slide $CAP \
     --n-permutations        10 \
     --diffmap-neighbors     10 \
-    --diffmap-comps         5 \
     --features-cache-dir    /scratch/finnley1/data/smoke_test_cache
 
 # ── Step 3: LOO Phase B — project SLIDE2 onto 1-slide manifold ───────────────
