@@ -69,6 +69,7 @@ python -m cancer_trajectory_atlas.run_all \
 
 # ── Step 2: LOO training run (train on SLIDE1 only) ──────────────────────────
 # Exercises: single-slide atlas path, projector serialisation.
+rm -f /scratch/finnley1/data/smoke_test_cache/*.npy
 echo ""
 echo "--- Step 2: LOO training (1 slide) ---"
 python -m cancer_trajectory_atlas.run_all \
@@ -94,6 +95,7 @@ python -m cancer_trajectory_atlas.run_all \
 # Cap must match Step 1 so patch counts align in the loo_result comparison.
 echo ""
 echo "--- Step 3: LOO projection (knn) ---"
+rm -f /scratch/finnley1/data/smoke_test_cache/*.npy
 python -m cancer_trajectory_atlas.analysis.loo_project \
     --projector-dir         "$SMOKE_DIR/loo_train/projector" \
     --held-out-slide        "$SLIDE2" \
