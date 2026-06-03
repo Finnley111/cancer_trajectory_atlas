@@ -10,9 +10,9 @@ def convert_coordinates(coords, width, height):
         return [convert_coordinates(c, width, height) for c in coords]
 
 def main():
-    dims_file = 'img_dims.txt'
-    input_dir = './geojsons/'
-    output_dir = './polygons/'
+    dims_file = './converters/img_dims.txt'
+    input_dir = './data/annotations/'
+    output_dir = './data/annotations_ratio/'
     
     # Safely create the output directory
     os.makedirs(output_dir, exist_ok=True)
