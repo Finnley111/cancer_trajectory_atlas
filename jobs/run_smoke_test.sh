@@ -17,6 +17,9 @@ set -euo pipefail
 
 mkdir -p logs
 
+mkdir -p /scratch/finnley1/data/smoke_test_cache
+rm -f /scratch/finnley1/data/smoke_test_cache/*.npy
+
 module load StdEnv/2023 python/3.11 gcc opencv openslide openblas hdf5 igraph
 source ~/envs/atlas/bin/activate
 
