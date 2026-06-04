@@ -1,6 +1,6 @@
 #!/bin/bash
 # Full Cancer Trajectory Atlas experiment pipeline — sequential, single GPU job.
-# Runs: cache reset → cache population → Baseline A → Baseline B → 16-slide LOO.
+# Runs: cache reset → Baseline A (populates none cache) → Baseline B → 16-slide LOO.
 #
 # Usage:
 #   sbatch ~/cancer_trajectory_atlas/jobs/run_full_experiments.sh
@@ -67,30 +67,8 @@ echo "============================================"
 
 cd ~
 
-# ── Cache population: none stain (all 16 slides, uncapped) ───────────────────
-echo ""
-echo "=== Cache population — none stain (16 slides, uncapped) ==="
-python -m cancer_trajectory_atlas.run_all \
-    --run \
-    --png-dir               "$PNG_DIR" \
-    --annotation-dir        "$ANN_DIR" \
-    --output-dir            "$SCRATCH/results/cache_pop_none_${SLURM_JOB_ID}" \
-    --slides                "$ALL_SLIDES" \
-    --stain-method          none \
-    --model                 phikon \
-    --patch-size            112 \
-    --stride                96 \
-    --clustering-method     leiden \
-    --leiden-resolution     0.5 \
-    --harmony \
-    --harmony-key           section_number \
-    --n-permutations        1000 \
-    --features-cache-dir    "$CACHE_DIR_NONE"
-
-echo "Cache (none) contents (${#SLIDES[@]} .npy files expected):"
-ls -lh "$CACHE_DIR_NONE"/*.npy
-
 # ── Baseline A: none + Harmony (canonical reference for LOO Phase B) ─────────
+# This run also populates CACHE_DIR_NONE — all subsequent LOO Phase A runs are cache hits.
 echo ""
 echo "=== Baseline A: none + Harmony ==="
 python -m cancer_trajectory_atlas.run_all \
