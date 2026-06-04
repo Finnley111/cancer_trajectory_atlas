@@ -67,15 +67,15 @@ echo "============================================"
 
 cd ~
 
-# ── Baseline A: none + Harmony (canonical reference for LOO Phase B) ─────────
+# ── Baseline A: none + Harmony + median cap ──────────────────────────────────
 # This run also populates CACHE_DIR_NONE — all subsequent LOO Phase A runs are cache hits.
 echo ""
-echo "=== Baseline A: none + Harmony ==="
+echo "=== Baseline A: none + Harmony + median cap ==="
 python -m cancer_trajectory_atlas.run_all \
     --run \
     --png-dir               "$PNG_DIR" \
     --annotation-dir        "$ANN_DIR" \
-    --output-dir            "$BASELINE_DIR/atlas_none_harmony" \
+    --output-dir            "$BASELINE_DIR/atlas_none_harmony_median" \
     --slides                "$ALL_SLIDES" \
     --stain-method          none \
     --model                 phikon \
@@ -86,21 +86,22 @@ python -m cancer_trajectory_atlas.run_all \
     --harmony \
     --harmony-key           section_number \
     --n-permutations        1000 \
+    --cap-strategy          median \
     --features-cache-dir    "$CACHE_DIR_NONE"
 
 echo "Baseline A results.csv:"
-ls -lh "$BASELINE_DIR/atlas_none_harmony/results.csv"
+ls -lh "$BASELINE_DIR/atlas_none_harmony_median/results.csv"
 
-# ── Baseline B: Macenko + Harmony ────────────────────────────────────────────
+# ── Baseline B: Macenko + Harmony + median cap ───────────────────────────────
 # Uses a separate cache dir — Macenko-normalized patches produce different
 # Phikon embeddings than raw patches; sharing the none cache is incorrect.
 echo ""
-echo "=== Baseline B: Macenko + Harmony ==="
+echo "=== Baseline B: Macenko + Harmony + median cap ==="
 python -m cancer_trajectory_atlas.run_all \
     --run \
     --png-dir               "$PNG_DIR" \
     --annotation-dir        "$ANN_DIR" \
-    --output-dir            "$BASELINE_DIR/atlas_macenko_harmony" \
+    --output-dir            "$BASELINE_DIR/atlas_macenko_harmony_median" \
     --slides                "$ALL_SLIDES" \
     --stain-method          macenko \
     --model                 phikon \
@@ -111,16 +112,17 @@ python -m cancer_trajectory_atlas.run_all \
     --harmony \
     --harmony-key           section_number \
     --n-permutations        1000 \
+    --cap-strategy          median \
     --features-cache-dir    "$CACHE_DIR_MACENKO"
 
 echo "Baseline B results.csv:"
-ls -lh "$BASELINE_DIR/atlas_macenko_harmony/results.csv"
+ls -lh "$BASELINE_DIR/atlas_macenko_harmony_median/results.csv"
 
 # ── LOO loop: 16 held-out slides ─────────────────────────────────────────────
 echo ""
 echo "=== LOO loop (${#SLIDES[@]} slides) ==="
 
-FULL_RUN_DIR="$BASELINE_DIR/atlas_none_harmony"
+FULL_RUN_DIR="$BASELINE_DIR/atlas_none_harmony_median"
 
 for HELD_OUT in "${SLIDES[@]}"; do
     echo ""
@@ -148,6 +150,7 @@ for HELD_OUT in "${SLIDES[@]}"; do
         --harmony \
         --harmony-key           section_number \
         --n-permutations        200 \
+        --cap-strategy          median \
         --features-cache-dir    "$CACHE_DIR_NONE"
 
     # Phase B — project held-out slide onto the 15-slide manifold.
@@ -168,8 +171,8 @@ echo "============================================"
 echo "  ALL EXPERIMENTS COMPLETE"
 echo "============================================"
 echo ""
-echo "Baseline A:  $BASELINE_DIR/atlas_none_harmony"
-echo "Baseline B:  $BASELINE_DIR/atlas_macenko_harmony"
+echo "Baseline A:  $BASELINE_DIR/atlas_none_harmony_median"
+echo "Baseline B:  $BASELINE_DIR/atlas_macenko_harmony_median"
 echo "LOO results: $LOO_DIR/loo_*/loo_result_*.json"
 echo ""
 echo "Aggregate LOO results with:"

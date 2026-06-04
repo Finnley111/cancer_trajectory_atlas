@@ -47,9 +47,14 @@ class PipelineConfig:
     # Per-slide Phikon feature cache (None = disabled; set to a Path to enable)
     features_cache_dir: Path = None
 
-    # Per-slide patch count cap (None or 0 = no cap; applied after ROI filter, before Phikon)
+    # Per-slide patch count cap.
+    # cap_strategy controls how the cap is computed:
+    #   'none'   — use max_patches_per_slide if set (backward compat), else no cap
+    #   'fixed'  — cap at max_patches_per_slide (must be set)
+    #   'median' — cap at cohort median patch count, computed after full extraction
     max_patches_per_slide: Optional[int] = None
     patch_sample_seed: int = 42
+    cap_strategy: str = "none"
 
     # Minimum fraction of the patch area that must lie inside an ROI polygon.
     # None = centre-point check only (original behaviour).

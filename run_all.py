@@ -306,6 +306,10 @@ def run_pipeline(cfg: PipelineConfig):
         Path(cfg.features_cache_dir).mkdir(parents=True, exist_ok=True)
         print(f"  Feature cache enabled: {cfg.features_cache_dir}")
 
+    # ── Pass 1: Extract & Cache (full uncapped features per slide) ────────────
+    # Sampling is deferred to Pass 2 so the cohort median can be computed first.
+    slide_data = []
+
     for i, slide_entry in enumerate(slides):
         image_path = slide_entry["image"]
         slide_name = Path(image_path).stem
@@ -354,9 +358,8 @@ def run_pipeline(cfg: PipelineConfig):
 
         orig_count = len(patches)
 
-        # Cache always stores full (uncapped) features so the stored index stays
-        # stable across LOO runs with different --max-patches-per-slide values.
-        # Extract/load here, before sample_patches modifies the patch array.
+        # Cache always stores full (uncapped) features — cap is applied in Pass 2
+        # after the cohort median is known. Do not sample here.
         slide_feats = None
         if cfg.features_cache_dir:
             cache_file = Path(cfg.features_cache_dir) / f"{slide_name}_features.npy"
@@ -383,34 +386,65 @@ def run_pipeline(cfg: PipelineConfig):
                 np.save(cache_file, slide_feats)
                 print(f"    Saved to cache: {cache_file.name}")
 
+        slide_data.append({
+            "slide_idx": i,
+            "slide_name": slide_name,
+            "patches": patches,
+            "coords": coords,
+            "slide_feats": slide_feats,
+            "orig_count": orig_count,
+        })
+
+    if not slide_data:
+        print("ERROR: No patches extracted from any slide!")
+        return
+
+    # ── Pass 2: Calculate active cap & sample ─────────────────────────────────
+    if cfg.cap_strategy == "median":
+        active_cap = int(np.median([d["orig_count"] for d in slide_data]))
+        print(f"\n  Cap strategy: median → {active_cap} patches/slide "
+              f"(computed across {len(slide_data)} slides)")
+    elif cfg.cap_strategy == "fixed":
+        active_cap = cfg.max_patches_per_slide
+        print(f"\n  Cap strategy: fixed → {active_cap} patches/slide")
+    else:  # 'none' — fall back to max_patches_per_slide for backward compat
+        active_cap = cfg.max_patches_per_slide
+
+    for d in slide_data:
+        slide_name = d["slide_name"]
+        slide_idx = d["slide_idx"]
+        patches = d["patches"]
+        coords = d["coords"]
+        slide_feats = d["slide_feats"]
+        orig_count = d["orig_count"]
+
         patches, coords, selected_idx = sample_patches(
-            patches, coords, cfg.max_patches_per_slide, cfg.patch_sample_seed, slide_name
+            patches, coords, active_cap, cfg.patch_sample_seed, slide_name
         )
         was_capped = selected_idx is not None
         if was_capped:
-            print(f"    Sampled {len(patches)} / {orig_count} patches (cap={cfg.max_patches_per_slide})")
-            sampling_indices[slide_name] = selected_idx
+            print(f"    [{slide_name}] Sampled {len(patches)} / {orig_count} patches "
+                  f"(cap={active_cap})")
         sampling_log_rows.append({
             "slide_name": slide_name,
             "n_extracted": orig_count,
             "n_sampled": len(patches),
             "was_capped": was_capped,
-            "max_patches_per_slide": cfg.max_patches_per_slide,
+            "cap_strategy": cfg.cap_strategy,
+            "active_cap": active_cap,
             "seed": cfg.patch_sample_seed,
         })
+        if was_capped:
+            sampling_indices[slide_name] = selected_idx
 
         all_patches_list.append(patches)
         all_coords_list.append(coords)
-        all_slide_ids.extend([i] * len(patches))
+        all_slide_ids.extend([slide_idx] * len(patches))
 
         if slide_feats is not None:
             if selected_idx is not None:
                 slide_feats = slide_feats[selected_idx]
             all_features_list.append(slide_feats)
-
-    if not all_patches_list:
-        print("ERROR: No patches extracted from any slide!")
-        return
 
     all_patches = np.concatenate(all_patches_list)
     all_coords = np.concatenate(all_coords_list)
@@ -691,10 +725,16 @@ Examples:
                         help="Directory for per-slide Phikon feature cache (.npy). "
                              "Features are saved on first run and loaded on subsequent runs, "
                              "avoiding redundant GPU inference across LOO runs.")
+    parser.add_argument("--cap-strategy", type=str, default="none",
+                        choices=["none", "fixed", "median"],
+                        help="Patch count cap strategy: 'none' = use --max-patches-per-slide "
+                             "if set (backward compat), else no cap; 'fixed' = cap at "
+                             "--max-patches-per-slide; 'median' = cap each slide at the "
+                             "cohort median patch count computed after full extraction. "
+                             "(default: none)")
     parser.add_argument("--max-patches-per-slide", type=int, default=None,
-                        help="Cap patches per slide after ROI filtering (None = no cap). "
-                             "Recommended: 1900 (cohort median) to prevent over-represented "
-                             "slides from dominating the pooled manifold.")
+                        help="Per-slide patch cap when --cap-strategy is 'fixed' or for "
+                             "backward-compat with 'none'. Ignored when strategy is 'median'.")
     parser.add_argument("--patch-sample-seed", type=int, default=42,
                         help="Base random seed for per-slide patch subsampling (default: 42). "
                              "Combined with a slide-name-derived hash for order independence.")
@@ -754,6 +794,7 @@ Examples:
         features_cache_dir=args.features_cache_dir,
         max_patches_per_slide=args.max_patches_per_slide,
         patch_sample_seed=args.patch_sample_seed,
+        cap_strategy=args.cap_strategy,
         min_roi_coverage=args.min_roi_coverage,
         root_cluster=str(args.root_cluster) if args.root_cluster is not None else None,
     )
