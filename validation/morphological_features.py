@@ -154,6 +154,32 @@ def compute_packing_irregularity(labeled_mask: np.ndarray) -> float:
     return float(nn_dists.std() / mean_dist)
 
 
+# ── Lightweight nuclear density (for multi-root DPT root selection) ──
+
+def compute_nuclear_density_quick(patches: np.ndarray) -> np.ndarray:
+    """Compute nuclear density for each patch using only hematoxylin + Otsu.
+
+    Faster than the full morphological feature suite; used to select the
+    n lowest-cellularity root candidates before running multi-root DPT.
+
+    Returns:
+        (N,) float array of nuclei-per-pixel-area values.
+    """
+    n = len(patches)
+    patch_area = patches.shape[1] * patches.shape[2]
+    densities = np.zeros(n, dtype=np.float32)
+
+    for i in range(n):
+        try:
+            h_channel = _deconvolve_hematoxylin(patches[i])
+            labeled = _segment_nuclei_simple(h_channel)
+            densities[i] = compute_nuclear_density(labeled, patch_area)
+        except Exception:
+            pass  # leave as 0.0 on failure
+
+    return densities
+
+
 # ── Main feature extraction loop ────────────────────────────────────
 
 def compute_morphological_features(

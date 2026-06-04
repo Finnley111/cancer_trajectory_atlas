@@ -47,21 +47,28 @@ class PipelineConfig:
     # Per-slide Phikon feature cache (None = disabled; set to a Path to enable)
     features_cache_dir: Path = None
 
-    # Per-slide patch count cap.
+    # Per-slide patch count cap (Vig et al. slide-aware sampling).
     # cap_strategy controls how the cap is computed:
-    #   'none'   — use max_patches_per_slide if set (backward compat), else no cap
-    #   'fixed'  — cap at max_patches_per_slide (must be set)
+    #   'fixed'  — cap each slide at max_patches_per_slide (default)
     #   'median' — cap at cohort median patch count, computed after full extraction
-    max_patches_per_slide: Optional[int] = None
+    #   'none'   — use max_patches_per_slide if set (backward compat), else no cap
+    # max_patches_per_slide=0 means no cap regardless of strategy.
+    # target_total is informational only (logged; never used in sampling logic).
+    max_patches_per_slide: Optional[int] = 200
     patch_sample_seed: int = 42
-    cap_strategy: str = "none"
+    cap_strategy: str = "fixed"
+    target_total: int = 3200
 
     # Minimum fraction of the patch area that must lie inside an ROI polygon.
     # None = centre-point check only (original behaviour).
     # 0.5 = drop patches where more than half the area is outside the annotation.
     min_roi_coverage: Optional[float] = None
 
-    # Root cluster for diffusion pseudotime.
-    # None = auto-select cluster "0" (always wrong on first run; inspect
-    # fig2_cluster_patches.png then re-run with the correct value).
+    # Root cluster for diffusion pseudotime (informational; unused with multi-root DPT).
     root_cluster: Optional[str] = None
+
+    # Multi-root DPT parameters.
+    # n_roots candidates are the n lowest-cellularity patches; DPT is run once
+    # per candidate and the results are median-aggregated.
+    n_roots: int = 20
+    root_metric: str = "cellularity"

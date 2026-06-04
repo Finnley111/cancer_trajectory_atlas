@@ -143,6 +143,62 @@ def compute_dpt(
     return adata
 
 
+def compute_dpt_multi_root(
+    adata: "ad.AnnData",
+    nuclear_density: np.ndarray,
+    n_roots: int = 20,
+) -> "ad.AnnData":
+    """Run DPT from n_roots lowest-cellularity root candidates; median-aggregate.
+
+    For each root candidate r:
+        pt_r = scanpy DPT with iroot=r
+    Final pseudotime = median(pt_matrix, axis=0), normalized to [0, 1].
+    Uncertainty = std(pt_matrix, axis=0), stored as pseudotime_std (un-normalized).
+
+    Results stored in adata.obs['pseudotime'] and adata.obs['pseudotime_std'].
+    """
+    _require_scanpy()
+    import scanpy as sc
+
+    n_patches = len(adata)
+    n_roots = min(n_roots, n_patches)
+    root_candidates = np.argsort(nuclear_density)[:n_roots].tolist()
+
+    print(f"  Multi-root DPT: {n_roots} root candidates "
+          f"(nuclear density range [{nuclear_density[root_candidates].min():.4f}, "
+          f"{nuclear_density[root_candidates[-1]]:.4f}])")
+
+    pt_matrix = np.zeros((n_roots, n_patches), dtype=np.float64)
+
+    for r_i, root_idx in enumerate(root_candidates):
+        adata_tmp = adata.copy()
+        adata_tmp.uns["iroot"] = int(root_idx)
+        sc.tl.dpt(adata_tmp)
+        pt = adata_tmp.obs["dpt_pseudotime"].values.copy()
+
+        finite_mask = np.isfinite(pt)
+        if not finite_mask.all():
+            pt[~finite_mask] = pt[finite_mask].max() if finite_mask.any() else 0.0
+
+        pt_matrix[r_i] = pt
+
+    pseudotime_median = np.median(pt_matrix, axis=0)
+    pseudotime_std    = np.std(pt_matrix, axis=0)
+
+    pt_min, pt_max = pseudotime_median.min(), pseudotime_median.max()
+    if pt_max - pt_min < 1e-10:
+        print("  WARNING: DPT range is near-zero — no trajectory detected.")
+        adata.obs["pseudotime"] = np.zeros(n_patches)
+    else:
+        adata.obs["pseudotime"] = (pseudotime_median - pt_min) / (pt_max - pt_min)
+
+    adata.obs["pseudotime_std"] = pseudotime_std
+
+    print(f"  Pseudotime median range: [{pt_min:.4f}, {pt_max:.4f}] → normalized [0, 1]")
+    print(f"  Pseudotime std range:    [{pseudotime_std.min():.4f}, {pseudotime_std.max():.4f}]")
+    return adata
+
+
 # ── Convenience wrapper ──────────────────────────────────────────────
 
 def run_diffusion_pseudotime(

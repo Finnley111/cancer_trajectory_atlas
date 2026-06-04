@@ -162,6 +162,22 @@ def plot_umap_pseudotime(X_umap, pseudotime, save_path, title="UMAP — Pseudoti
     print(f"  Saved: {save_path}")
 
 
+def plot_umap_pseudotime_std(X_umap, pseudotime_std, save_path,
+                             title="UMAP — Pseudotime Uncertainty (std across roots)"):
+    _ensure_dir(save_path)
+    fig, ax = plt.subplots(figsize=(10, 8))
+    sc = ax.scatter(X_umap[:, 0], X_umap[:, 1], c=pseudotime_std, s=5,
+                    cmap="magma", alpha=0.6, rasterized=True)
+    ax.set_title(title)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    plt.colorbar(sc, ax=ax, label="Pseudotime std")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {save_path}")
+
+
 # Pseudotime per cluster
 
 def plot_pseudotime_violins(pseudotime, cluster_labels, save_path,

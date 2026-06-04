@@ -86,7 +86,7 @@ python -m cancer_trajectory_atlas.run_all \
     --harmony \
     --harmony-key           section_number \
     --n-permutations        1000 \
-    --cap-strategy          median \
+    --max-patches-per-slide 200 \
     --features-cache-dir    "$CACHE_DIR_NONE"
 
 echo "Baseline A results.csv:"
@@ -112,7 +112,7 @@ python -m cancer_trajectory_atlas.run_all \
     --harmony \
     --harmony-key           section_number \
     --n-permutations        1000 \
-    --cap-strategy          median \
+    --max-patches-per-slide 200 \
     --features-cache-dir    "$CACHE_DIR_MACENKO"
 
 echo "Baseline B results.csv:"
@@ -150,7 +150,7 @@ for HELD_OUT in "${SLIDES[@]}"; do
         --harmony \
         --harmony-key           section_number \
         --n-permutations        200 \
-        --cap-strategy          median \
+        --max-patches-per-slide 200 \
         --features-cache-dir    "$CACHE_DIR_NONE"
 
     # Phase B — project held-out slide onto the 15-slide manifold.

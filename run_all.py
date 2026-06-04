@@ -267,7 +267,7 @@ def run_pipeline(cfg: PipelineConfig):
         fit_pca, run_umap, cluster, check_slide_independence, get_cluster_centroids,
     )
     from .analysis.diffusion import (
-        build_adata, compute_diffusion_map, compute_dpt,
+        build_adata, compute_diffusion_map, compute_dpt_multi_root,
     )
     from .validation.morphological_features import compute_morphological_features
     from .validation.correlations import run_full_validation
@@ -400,6 +400,9 @@ def run_pipeline(cfg: PipelineConfig):
         return
 
     # ── Pass 2: Calculate active cap & sample ─────────────────────────────────
+    # Shuffle slide order before sampling to prevent systematic ordering bias.
+    np.random.default_rng(cfg.patch_sample_seed).shuffle(slide_data)
+
     if cfg.cap_strategy == "median":
         active_cap = int(np.median([d["orig_count"] for d in slide_data]))
         print(f"\n  Cap strategy: median → {active_cap} patches/slide "
@@ -422,17 +425,17 @@ def run_pipeline(cfg: PipelineConfig):
             patches, coords, active_cap, cfg.patch_sample_seed, slide_name
         )
         was_capped = selected_idx is not None
+        n_sampled = len(patches)
         if was_capped:
-            print(f"    [{slide_name}] Sampled {len(patches)} / {orig_count} patches "
+            print(f"    [{slide_name}] Sampled {n_sampled} / {orig_count} patches "
                   f"(cap={active_cap})")
         sampling_log_rows.append({
-            "slide_name": slide_name,
-            "n_extracted": orig_count,
-            "n_sampled": len(patches),
+            "slide_id": slide_name,
+            "patches_before_cap": orig_count,
+            "patches_after_cap": n_sampled,
             "was_capped": was_capped,
-            "cap_strategy": cfg.cap_strategy,
-            "active_cap": active_cap,
             "seed": cfg.patch_sample_seed,
+            "pct_retained": round(n_sampled / orig_count * 100, 1) if orig_count > 0 else 0.0,
         })
         if was_capped:
             sampling_indices[slide_name] = selected_idx
@@ -450,7 +453,10 @@ def run_pipeline(cfg: PipelineConfig):
     all_coords = np.concatenate(all_coords_list)
     slide_ids = np.array(all_slide_ids)
 
-    print(f"\n  Total: {len(all_patches)} patches from {len(slide_names)} slides")
+    n_total = len(all_patches)
+    pct_of_target = n_total / cfg.target_total * 100 if cfg.target_total else 0
+    print(f"\n  Total: {n_total} patches from {len(slide_names)} slides "
+          f"(target: {cfg.target_total}, {pct_of_target:.0f}%)")
 
     # Feature extraction (from cache or bulk inference)
     print(f"\n  Extracting {cfg.model} features...")
@@ -502,22 +508,6 @@ def run_pipeline(cfg: PipelineConfig):
     print("PHASE 4: Diffusion Pseudotime")
     print(f"{'='*60}")
 
-    # Root cluster selection.
-    valid_clusters = sorted([c for c in set(cluster_labels) if c != -1])
-    if cfg.root_cluster is not None:
-        root_cluster = str(cfg.root_cluster)
-        if int(root_cluster) not in valid_clusters:
-            print(f"  WARNING: --root-cluster {root_cluster} not in valid clusters "
-                  f"{valid_clusters}. Falling back to cluster 0.")
-            root_cluster = str(valid_clusters[0])
-        else:
-            print(f"  Root cluster: {root_cluster} (from --root-cluster)")
-    else:
-        root_cluster = str(valid_clusters[0])
-        print(f"  Auto root cluster: {root_cluster}")
-        print(f"  IMPORTANT: Inspect fig2_cluster_patches.png after this run.")
-        print(f"  Re-run with --root-cluster N to anchor pseudotime biologically.\n")
-
     adata = build_adata(X_embed, cluster_labels, slide_ids, X_umap)
 
     # Add slide-level metadata (useful for QC batch plots and harmony ablations)
@@ -533,13 +523,23 @@ def run_pipeline(cfg: PipelineConfig):
         adata.obsm["X_pca_harmony"]  = X_embed.astype(np.float32)
 
     compute_diffusion_map(adata, n_neighbors=cfg.diffmap_neighbors, n_comps=cfg.diffmap_comps)
-    compute_dpt(adata, root_cluster=root_cluster)
+
+    # Pre-compute nuclear density for multi-root DPT root candidate selection.
+    from .validation.morphological_features import compute_nuclear_density_quick
+    print(f"  Computing nuclear density for {cfg.n_roots}-root DPT candidate selection...")
+    t_nd = time.time()
+    nuclear_density_quick = compute_nuclear_density_quick(all_patches)
+    print(f"  Nuclear density done: {time.time() - t_nd:.1f}s")
+    compute_dpt_multi_root(adata, nuclear_density_quick, n_roots=cfg.n_roots)
 
     pseudotime = adata.obs["pseudotime"].values
+    pseudotime_std = adata.obs["pseudotime_std"].values
 
     # Diffusion figures
     if X_umap is not None:
         viz.plot_umap_pseudotime(X_umap, pseudotime, fig_dir / "fig4_umap_pseudotime.png")
+        viz.plot_umap_pseudotime_std(X_umap, pseudotime_std,
+                                     fig_dir / "fig4b_umap_pseudotime_std.png")
     viz.plot_pseudotime_violins(pseudotime, cluster_labels, fig_dir / "fig5_pt_violins.png")
     viz.plot_spatial_clusters(all_coords, cluster_labels, slide_ids, fig_dir,
                               slide_name_map=dict(enumerate(slide_names)),
@@ -595,6 +595,7 @@ def run_pipeline(cfg: PipelineConfig):
         "slide_name": [slide_names[sid] for sid in slide_ids],
         "cluster": cluster_labels,
         "pseudotime": pseudotime,
+        "pseudotime_std": pseudotime_std,
     })
     for name, values in morph_features.items():
         df[name] = values
@@ -603,8 +604,8 @@ def run_pipeline(cfg: PipelineConfig):
 
     if sampling_log_rows:
         sampling_df = pd.DataFrame(sampling_log_rows)
-        sampling_df.to_csv(output_dir / "patch_sampling_log.csv", index=False)
-        print(f"  Sampling log: {output_dir / 'patch_sampling_log.csv'}")
+        sampling_df.to_csv(output_dir / "sampling_manifest.csv", index=False)
+        print(f"  Sampling manifest: {output_dir / 'sampling_manifest.csv'}")
         if sampling_indices:
             sampling_dir = output_dir / "sampling"
             sampling_dir.mkdir(exist_ok=True)
@@ -725,16 +726,20 @@ Examples:
                         help="Directory for per-slide Phikon feature cache (.npy). "
                              "Features are saved on first run and loaded on subsequent runs, "
                              "avoiding redundant GPU inference across LOO runs.")
-    parser.add_argument("--cap-strategy", type=str, default="none",
+    parser.add_argument("--cap-strategy", type=str, default="fixed",
                         choices=["none", "fixed", "median"],
-                        help="Patch count cap strategy: 'none' = use --max-patches-per-slide "
-                             "if set (backward compat), else no cap; 'fixed' = cap at "
-                             "--max-patches-per-slide; 'median' = cap each slide at the "
-                             "cohort median patch count computed after full extraction. "
-                             "(default: none)")
-    parser.add_argument("--max-patches-per-slide", type=int, default=None,
-                        help="Per-slide patch cap when --cap-strategy is 'fixed' or for "
-                             "backward-compat with 'none'. Ignored when strategy is 'median'.")
+                        help="Patch count cap strategy: 'fixed' = cap at "
+                             "--max-patches-per-slide (default); 'median' = cap at cohort "
+                             "median computed after full extraction; 'none' = use "
+                             "--max-patches-per-slide if set (backward compat). "
+                             "(default: fixed)")
+    parser.add_argument("--max-patches-per-slide", type=int, default=200,
+                        help="Per-slide patch cap (Vig et al. slide-aware sampling). "
+                             "0 = no cap. Used when --cap-strategy is 'fixed' or 'none'. "
+                             "(default: 200)")
+    parser.add_argument("--target-total", type=int, default=3200,
+                        help="Informational target for total patches across all slides. "
+                             "Logged only — never used in sampling logic. (default: 3200)")
     parser.add_argument("--patch-sample-seed", type=int, default=42,
                         help="Base random seed for per-slide patch subsampling (default: 42). "
                              "Combined with a slide-name-derived hash for order independence.")
@@ -743,9 +748,14 @@ Examples:
                              "(3x3 grid check). Default: None (centre-point only). "
                              "Use 0.5 to drop boundary patches that are mostly outside the annotation.")
     parser.add_argument("--root-cluster", type=int, default=None,
-                        help="Cluster to use as pseudotime root (most organized morphology). "
-                             "Default: None (auto-selects cluster 0, always wrong on first run). "
-                             "Inspect fig2_cluster_patches.png then re-run with the correct cluster.")
+                        help="Legacy arg; unused with multi-root DPT.")
+    parser.add_argument("--n-roots", type=int, default=20,
+                        help="Number of root candidates for multi-root DPT averaging. "
+                             "Candidates are the n patches with lowest nuclear density. "
+                             "(default: 20)")
+    parser.add_argument("--root-metric", type=str, default="cellularity",
+                        choices=["cellularity"],
+                        help="Metric used to rank root candidates. (default: cellularity)")
 
     args = parser.parse_args()
 
@@ -795,8 +805,11 @@ Examples:
         max_patches_per_slide=args.max_patches_per_slide,
         patch_sample_seed=args.patch_sample_seed,
         cap_strategy=args.cap_strategy,
+        target_total=args.target_total,
         min_roi_coverage=args.min_roi_coverage,
         root_cluster=str(args.root_cluster) if args.root_cluster is not None else None,
+        n_roots=args.n_roots,
+        root_metric=args.root_metric,
     )
 
     if args.convert:

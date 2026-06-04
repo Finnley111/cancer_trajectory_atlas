@@ -293,13 +293,19 @@ def get_patches_from_array(
 
 
 def sample_patches(patches, coords, max_n, base_seed, slide_name):
-    """Subsample patches to at most max_n, reproducibly by slide name."""
+    """Subsample patches to at most max_n, reproducibly by slide name.
+
+    Shuffles the full patch list then takes the first max_n entries so that
+    patch order is randomised (not spatially sorted). max_n=0 or None = no cap.
+    """
     import hashlib
-    if max_n is None or max_n <= 0 or len(patches) <= max_n:
+    if max_n is None or max_n == 0 or len(patches) <= max_n:
         return patches, coords, None
     name_seed = int(hashlib.md5(slide_name.encode()).hexdigest()[:8], 16)
     rng = np.random.default_rng(int(base_seed) ^ name_seed)
-    idx = np.sort(rng.choice(len(patches), max_n, replace=False))
+    idx = np.arange(len(patches))
+    rng.shuffle(idx)
+    idx = idx[:max_n]
     return patches[idx], coords[idx], idx
 
 
