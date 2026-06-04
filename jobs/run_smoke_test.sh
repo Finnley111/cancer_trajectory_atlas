@@ -17,9 +17,6 @@ set -euo pipefail
 
 mkdir -p logs
 
-mkdir -p /scratch/finnley1/data/smoke_test_cache
-rm -f /scratch/finnley1/data/smoke_test_cache/*.npy
-
 module load StdEnv/2023 python/3.11 gcc opencv openslide openblas hdf5 igraph
 source ~/envs/atlas/bin/activate
 
@@ -65,11 +62,10 @@ python -m cancer_trajectory_atlas.run_all \
     --max-patches-per-slide $CAP \
     --n-permutations        10 \
     --diffmap-neighbors     10 \
-    --features-cache-dir    /scratch/finnley1/data/smoke_test_cache
+    --features-cache-dir    "$CACHE_DIR"
 
 # ── Step 2: LOO training run (train on SLIDE1 only) ──────────────────────────
 # Exercises: single-slide atlas path, projector serialisation.
-rm -f /scratch/finnley1/data/smoke_test_cache/*.npy
 echo ""
 echo "--- Step 2: LOO training (1 slide) ---"
 python -m cancer_trajectory_atlas.run_all \
@@ -87,7 +83,7 @@ python -m cancer_trajectory_atlas.run_all \
     --max-patches-per-slide $CAP \
     --n-permutations        10 \
     --diffmap-neighbors     10 \
-    --features-cache-dir    /scratch/finnley1/data/smoke_test_cache
+    --features-cache-dir    "$CACHE_DIR"
 
 # ── Step 3: LOO Phase B — project SLIDE2 onto 1-slide manifold ───────────────
 # Exercises: AtlasProjector.load(), project(method="knn"),
@@ -95,11 +91,10 @@ python -m cancer_trajectory_atlas.run_all \
 # Cap must match Step 1 so patch counts align in the loo_result comparison.
 echo ""
 echo "--- Step 3: LOO projection (knn) ---"
-rm -f /scratch/finnley1/data/smoke_test_cache/*.npy
 python -m cancer_trajectory_atlas.analysis.loo_project \
     --projector-dir         "$SMOKE_DIR/loo_train/projector" \
     --held-out-slide        "$SLIDE2" \
-    --cache-dir             "/scratch/finnley1/data/smoke_test_cache" \
+    --cache-dir             "$CACHE_DIR" \
     --full-run-dir          "$SMOKE_DIR/ref" \
     --output-dir            "$SMOKE_DIR/loo_train" \
     --max-patches-per-slide $CAP \

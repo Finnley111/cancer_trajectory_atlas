@@ -353,6 +353,36 @@ def run_pipeline(cfg: PipelineConfig):
             continue
 
         orig_count = len(patches)
+
+        # Cache always stores full (uncapped) features so the stored index stays
+        # stable across LOO runs with different --max-patches-per-slide values.
+        # Extract/load here, before sample_patches modifies the patch array.
+        slide_feats = None
+        if cfg.features_cache_dir:
+            cache_file = Path(cfg.features_cache_dir) / f"{slide_name}_features.npy"
+            if cache_file.exists():
+                print(f"    Cache hit: {cache_file.name}")
+                slide_feats = np.load(cache_file)
+                if len(slide_feats) != orig_count:
+                    raise RuntimeError(
+                        f"Feature cache size mismatch for '{slide_name}': "
+                        f"cache has {len(slide_feats)} features but {orig_count} patches were extracted.\n"
+                        "The cache is stale (patch extraction settings changed). "
+                        "Delete the stale .npy file and re-run with GPU to rebuild it, "
+                        "or re-run run_cache_population.sh with the current extraction settings."
+                    )
+            else:
+                from .features.extractors import load_model_components, extract_features_from_model
+                if not _cache_model_loaded:
+                    print(f"    Pre-loading {cfg.model} model...")
+                    _cache_model, _cache_processor, _cache_device = load_model_components(cfg.model)
+                    _cache_model_loaded = True
+                slide_feats = extract_features_from_model(
+                    patches, _cache_model, _cache_processor, _cache_device
+                )
+                np.save(cache_file, slide_feats)
+                print(f"    Saved to cache: {cache_file.name}")
+
         patches, coords, selected_idx = sample_patches(
             patches, coords, cfg.max_patches_per_slide, cfg.patch_sample_seed, slide_name
         )
@@ -373,34 +403,10 @@ def run_pipeline(cfg: PipelineConfig):
         all_coords_list.append(coords)
         all_slide_ids.extend([i] * len(patches))
 
-        if cfg.features_cache_dir:
-            cache_file = Path(cfg.features_cache_dir) / f"{slide_name}_features.npy"
-            if cache_file.exists():
-                print(f"    Cache hit: {cache_file.name}")
-                cached = np.load(cache_file)
-                if len(cached) != orig_count:
-                    raise RuntimeError(
-                        f"Feature cache size mismatch for '{slide_name}': "
-                        f"cache has {len(cached)} features but {orig_count} patches were extracted.\n"
-                        "The cache is stale (patch extraction settings changed). "
-                        "Delete the stale .npy file and re-run with GPU to rebuild it, "
-                        "or re-run run_cache_population.sh with the current extraction settings."
-                    )
-                if selected_idx is not None:
-                    cached = cached[selected_idx]
-                all_features_list.append(cached)
-            else:
-                from .features.extractors import load_model_components, extract_features_from_model
-                if not _cache_model_loaded:
-                    print(f"    Pre-loading {cfg.model} model...")
-                    _cache_model, _cache_processor, _cache_device = load_model_components(cfg.model)
-                    _cache_model_loaded = True
-                slide_feats = extract_features_from_model(
-                    patches, _cache_model, _cache_processor, _cache_device
-                )
-                np.save(cache_file, slide_feats)
-                print(f"    Saved to cache: {cache_file.name}")
-                all_features_list.append(slide_feats)
+        if slide_feats is not None:
+            if selected_idx is not None:
+                slide_feats = slide_feats[selected_idx]
+            all_features_list.append(slide_feats)
 
     if not all_patches_list:
         print("ERROR: No patches extracted from any slide!")
