@@ -410,8 +410,14 @@ def run_pipeline(cfg: PipelineConfig):
     elif cfg.cap_strategy == "fixed":
         active_cap = cfg.max_patches_per_slide
         print(f"\n  Cap strategy: fixed → {active_cap} patches/slide")
-    else:  # 'none' — fall back to max_patches_per_slide for backward compat
-        active_cap = cfg.max_patches_per_slide
+    else:  # 'none'
+        active_cap = None
+        print(f"\n  Cap strategy: none → no cap (all patches retained)")
+
+    # Write active cap so downstream LOO Phase B jobs can match it exactly.
+    _cap_file_val = active_cap if active_cap is not None else 0
+    with open(output_dir / "active_cap.txt", "w") as f:
+        f.write(str(_cap_file_val))
 
     for d in slide_data:
         slide_name = d["slide_name"]
@@ -726,17 +732,15 @@ Examples:
                         help="Directory for per-slide Phikon feature cache (.npy). "
                              "Features are saved on first run and loaded on subsequent runs, "
                              "avoiding redundant GPU inference across LOO runs.")
-    parser.add_argument("--cap-strategy", type=str, default="fixed",
+    parser.add_argument("--cap-strategy", type=str, default="median",
                         choices=["none", "fixed", "median"],
-                        help="Patch count cap strategy: 'fixed' = cap at "
-                             "--max-patches-per-slide (default); 'median' = cap at cohort "
-                             "median computed after full extraction; 'none' = use "
-                             "--max-patches-per-slide if set (backward compat). "
-                             "(default: fixed)")
-    parser.add_argument("--max-patches-per-slide", type=int, default=200,
-                        help="Per-slide patch cap (Vig et al. slide-aware sampling). "
-                             "0 = no cap. Used when --cap-strategy is 'fixed' or 'none'. "
-                             "(default: 200)")
+                        help="Patch count cap strategy: 'median' = cap at cohort median "
+                             "computed after full extraction (default); 'fixed' = cap at "
+                             "--fixed-cap; 'none' = no cap. (default: median)")
+    parser.add_argument("--fixed-cap", "--max-patches-per-slide", type=int, default=200,
+                        dest="fixed_cap",
+                        help="Per-slide patch cap used when --cap-strategy is 'fixed'. "
+                             "0 = no cap. (default: 200)")
     parser.add_argument("--target-total", type=int, default=3200,
                         help="Informational target for total patches across all slides. "
                              "Logged only — never used in sampling logic. (default: 3200)")
@@ -802,7 +806,7 @@ Examples:
         diffmap_comps=args.diffmap_comps,
         slide_filter=slide_filter,
         features_cache_dir=args.features_cache_dir,
-        max_patches_per_slide=args.max_patches_per_slide,
+        max_patches_per_slide=args.fixed_cap,
         patch_sample_seed=args.patch_sample_seed,
         cap_strategy=args.cap_strategy,
         target_total=args.target_total,

@@ -59,7 +59,8 @@ python -m cancer_trajectory_atlas.run_all \
     --stride                96 \
     --clustering-method     leiden \
     --leiden-resolution     0.3 \
-    --max-patches-per-slide $CAP \
+    --cap-strategy          fixed \
+    --fixed-cap             $CAP \
     --n-permutations        10 \
     --diffmap-neighbors     10 \
     --features-cache-dir    "$CACHE_DIR"
@@ -80,7 +81,8 @@ python -m cancer_trajectory_atlas.run_all \
     --stride                96 \
     --clustering-method     leiden \
     --leiden-resolution     0.3 \
-    --max-patches-per-slide $CAP \
+    --cap-strategy          fixed \
+    --fixed-cap             $CAP \
     --n-permutations        10 \
     --diffmap-neighbors     10 \
     --features-cache-dir    "$CACHE_DIR"

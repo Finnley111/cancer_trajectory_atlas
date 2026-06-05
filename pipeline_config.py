@@ -56,7 +56,7 @@ class PipelineConfig:
     # target_total is informational only (logged; never used in sampling logic).
     max_patches_per_slide: Optional[int] = 200
     patch_sample_seed: int = 42
-    cap_strategy: str = "fixed"
+    cap_strategy: str = "median"
     target_total: int = 3200
 
     # Minimum fraction of the patch area that must lie inside an ROI polygon.

@@ -6,7 +6,7 @@
 #   sbatch ~/cancer_trajectory_atlas/jobs/run_full_experiments.sh
 
 #SBATCH --account=def-lmarti46
-#SBATCH --time=24:00:00
+#SBATCH --time=16:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --gres=gpu:1
@@ -67,10 +67,10 @@ echo "============================================"
 
 cd ~
 
-# ── Baseline A: none + Harmony + 200-patch fixed cap ─────────────────────────
+# ── Baseline A: none + Harmony + dynamic median cap ──────────────────────────
 # This run also populates CACHE_DIR_NONE — all subsequent LOO Phase A runs are cache hits.
 echo ""
-echo "=== Baseline A: none + Harmony + 200-patch cap ==="
+echo "=== Baseline A: none + Harmony + median cap ==="
 python -m cancer_trajectory_atlas.run_all \
     --run \
     --png-dir               "$PNG_DIR" \
@@ -86,18 +86,22 @@ python -m cancer_trajectory_atlas.run_all \
     --harmony \
     --harmony-key           section_number \
     --n-permutations        1000 \
-    --max-patches-per-slide 200 \
+    --cap-strategy          median \
     --n-roots               20 \
     --features-cache-dir    "$CACHE_DIR_NONE"
 
 echo "Baseline A results.csv:"
 ls -lh "$BASELINE_DIR/atlas_none_harmony_median/results.csv"
 
-# ── Baseline B: Macenko + Harmony + 200-patch fixed cap ──────────────────────
+# Read the computed median cap so LOO Phase B jobs use the identical patch count.
+BASELINE_CAP=$(cat "$BASELINE_DIR/atlas_none_harmony_median/active_cap.txt")
+echo "Baseline A active cap: $BASELINE_CAP patches/slide"
+
+# ── Baseline B: Macenko + Harmony + dynamic median cap ───────────────────────
 # Uses a separate cache dir — Macenko-normalized patches produce different
 # Phikon embeddings than raw patches; sharing the none cache is incorrect.
 echo ""
-echo "=== Baseline B: Macenko + Harmony + 200-patch cap ==="
+echo "=== Baseline B: Macenko + Harmony + median cap ==="
 python -m cancer_trajectory_atlas.run_all \
     --run \
     --png-dir               "$PNG_DIR" \
@@ -113,7 +117,7 @@ python -m cancer_trajectory_atlas.run_all \
     --harmony \
     --harmony-key           section_number \
     --n-permutations        1000 \
-    --max-patches-per-slide 200 \
+    --cap-strategy          median \
     --n-roots               20 \
     --features-cache-dir    "$CACHE_DIR_MACENKO"
 
@@ -152,20 +156,20 @@ for HELD_OUT in "${SLIDES[@]}"; do
         --harmony \
         --harmony-key           section_number \
         --n-permutations        200 \
-        --max-patches-per-slide 200 \
+        --cap-strategy          median \
         --n-roots               20 \
         --features-cache-dir    "$CACHE_DIR_NONE"
 
     # Phase B — project held-out slide onto the 15-slide manifold.
-    # --max-patches-per-slide must match the baseline run so patch counts align
-    # for the paired Spearman rho comparison against results.csv.
+    # --max-patches-per-slide must equal BASELINE_CAP so patch counts align
+    # with the 16-slide reference run (paired Spearman rho comparison).
     python -m cancer_trajectory_atlas.analysis.loo_project \
         --projector-dir         "$LOO_OUT/projector" \
         --held-out-slide        "$HELD_OUT" \
         --cache-dir             "$CACHE_DIR_NONE" \
         --full-run-dir          "$FULL_RUN_DIR" \
         --output-dir            "$LOO_OUT" \
-        --max-patches-per-slide 200 \
+        --max-patches-per-slide "$BASELINE_CAP" \
         --patch-sample-seed     42
 
     echo "Done: $HELD_OUT"
