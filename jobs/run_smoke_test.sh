@@ -1,6 +1,7 @@
 #!/bin/bash
-# SLURM job script — end-to-end smoke test (2 slides, 50-patch cap, no Harmony).
-# Verifies the full code path: patch extraction → atlas build → LOO projection.
+# SLURM job script — end-to-end smoke test (2 slides, 50-patch cap).
+# Verifies the full code path: patch extraction → atlas build (Harmony + PAGA
+# topology gate) → LOO projection.
 #
 # Usage:
 #   sbatch ~/cancer_trajectory_atlas/jobs/run_smoke_test.sh
@@ -25,7 +26,7 @@ export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 
 SLIDE1="6027-4L-2M-1_x5"
-SLIDE2="6028-4L-2M-1_x5"
+SLIDE2="6028-4L-2M-2_x5"
 SMOKE_DIR="$SCRATCH/results/smoke_${SLURM_JOB_ID}"
 CACHE_DIR="$SCRATCH/data/features_cache"
 PNG_DIR="$SCRATCH/data/MCF7_x5_cropped"
@@ -43,8 +44,11 @@ echo "========================="
 cd ~
 
 # ── Step 1: Full 2-slide reference run ───────────────────────────────────────
-# Exercises: patch extraction, Phikon (cache hit), PCA, UMAP, Leiden,
-#            diffusion pseudotime, morphological validation, projector save.
+# Exercises: patch extraction, Phikon (cache hit), PCA, Harmony, UMAP, Leiden,
+#            PAGA topology gate, diffusion pseudotime, morphological
+#            validation, projector save.
+# --harmony is included so this smoke test also exercises the PAGA-after-
+# Harmony code path used by the real production config (see PROJECT_STATE.md).
 echo ""
 echo "--- Step 1: Reference run (2 slides) ---"
 python -m cancer_trajectory_atlas.run_all \
@@ -63,10 +67,17 @@ python -m cancer_trajectory_atlas.run_all \
     --fixed-cap             $CAP \
     --n-permutations        10 \
     --diffmap-neighbors     10 \
+    --harmony \
+    --harmony-key           section_number \
     --features-cache-dir    "$CACHE_DIR"
 
 # ── Step 2: LOO training run (train on SLIDE1 only) ──────────────────────────
-# Exercises: single-slide atlas path, projector serialisation.
+# Exercises: single-slide atlas path, PAGA topology gate, projector serialisation.
+# No --harmony here deliberately: with only 1 training slide there is only 1
+# section_number batch, which is not a meaningful Harmony correction (and the
+# real LOO Phase A always trains on 15 slides spanning both sections, so this
+# step was never representative of Harmony behavior anyway). The Harmony+PAGA
+# interaction is already covered by Step 1, which spans both sections.
 echo ""
 echo "--- Step 2: LOO training (1 slide) ---"
 python -m cancer_trajectory_atlas.run_all \
