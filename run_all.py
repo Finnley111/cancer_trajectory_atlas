@@ -530,6 +530,18 @@ def run_pipeline(cfg: PipelineConfig):
 
     compute_diffusion_map(adata, n_neighbors=cfg.diffmap_neighbors, n_comps=cfg.diffmap_comps)
 
+    # ── PAGA topology gate ───────────────────────────────────────────────
+    from .analysis.diffusion import compute_paga_topology
+    n_paga_components, adata = compute_paga_topology(adata, groups="cluster")
+    viz.plot_paga(adata, fig_dir / "qc_paga_topology.png")
+    if X_umap is not None:
+        section_labels = adata.obs["section_number"].values
+        viz.plot_umap_section_cluster(
+            X_umap, section_labels, cluster_labels,
+            fig_dir / "qc_umap_section_vs_cluster.png",
+        )
+    # ── end PAGA gate ────────────────────────────────────────────────────
+
     # Pre-compute nuclear density for multi-root DPT root candidate selection.
     from .validation.morphological_features import compute_nuclear_density_quick
     print(f"  Computing nuclear density for {cfg.n_roots}-root DPT candidate selection...")

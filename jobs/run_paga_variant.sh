@@ -28,7 +28,7 @@
 #   sbatch jobs/run_paga_variant.sh section1 harmony section1_harmony
 
 #SBATCH --account=def-lmarti46
-#SBATCH --time=8:00:00
+#SBATCH --time=16:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --job-name=atlas_paga_variant

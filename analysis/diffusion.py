@@ -199,6 +199,48 @@ def compute_dpt_multi_root(
     return adata
 
 
+def compute_paga_topology(
+    adata: "ad.AnnData",
+    groups: str = "cluster",
+    threshold: float = 0.05,
+) -> Tuple[int, "ad.AnnData"]:
+    """Run PAGA and report connected-component count of the cluster graph.
+
+    Requires that sc.pp.neighbors has already been called (compute_diffusion_map).
+
+    Returns:
+        n_components: Number of connected components in the thresholded cluster graph.
+        adata: AnnData with paga results added to adata.uns['paga'].
+    """
+    _require_scanpy()
+    import scanpy as sc
+    from scipy.sparse.csgraph import connected_components as sp_connected_components
+    from scipy.sparse import csr_matrix
+
+    # PAGA requires a categorical obs column.
+    if not hasattr(adata.obs[groups], "cat"):
+        adata.obs[groups] = adata.obs[groups].astype("category")
+
+    print(f"  Running PAGA (groups='{groups}')...")
+    sc.tl.paga(adata, groups=groups)
+
+    conn = adata.uns["paga"]["connectivities"]
+    conn_thresh = (conn > threshold).astype(np.float32)
+    n_components, _ = sp_connected_components(
+        csr_matrix(conn_thresh), directed=False
+    )
+
+    print(f"  PAGA topology: {n_components} connected component(s) "
+          f"(threshold={threshold:.2f})")
+    if n_components == 1:
+        print("  → SINGLE component. Manifold is connected; DPT is valid.")
+    else:
+        print(f"  → {n_components} DISCONNECTED components. "
+              f"Check qc_umap_section_vs_cluster.png to see if they map onto section_number.")
+
+    return n_components, adata
+
+
 # ── Convenience wrapper ──────────────────────────────────────────────
 
 def run_diffusion_pseudotime(

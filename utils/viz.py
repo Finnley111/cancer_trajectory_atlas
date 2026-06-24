@@ -372,6 +372,57 @@ def plot_umap_by_slide(X_umap, slide_ids, save_path, title="UMAP — Slide ID (B
     print(f"  Saved: {save_path}")
 
 
+# ── PAGA cluster connectivity graph ─────────────────────────────────
+
+def plot_paga(adata, save_path, title="PAGA — Cluster Connectivity"):
+    _ensure_dir(save_path)
+    import scanpy as sc
+    fig, ax = plt.subplots(figsize=(10, 8))
+    sc.pl.paga(adata, ax=ax, show=False, title=title)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {save_path}")
+
+
+# ── Side-by-side UMAP: section vs cluster ────────────────────────────
+
+def plot_umap_section_cluster(X_umap, section_labels, cluster_labels, save_path):
+    _ensure_dir(save_path)
+    fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+
+    ax = axes[0]
+    unique_sections = sorted(set(section_labels))
+    cmap = plt.cm.get_cmap("tab10", len(unique_sections))
+    for i, sec in enumerate(unique_sections):
+        mask = np.asarray(section_labels) == sec
+        ax.scatter(X_umap[mask, 0], X_umap[mask, 1], s=5, alpha=0.5,
+                   color=cmap(i), label=sec, rasterized=True)
+    ax.set_title("UMAP — Section (batch)")
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.legend(markerscale=3, fontsize=9, title="Section")
+
+    ax = axes[1]
+    unique_clusters = sorted(set(cluster_labels))
+    cmap2 = plt.cm.get_cmap("tab20", len(unique_clusters))
+    for i, c in enumerate(unique_clusters):
+        mask = cluster_labels == c
+        label = f"Cluster {c}" if c != -1 else "Noise"
+        ax.scatter(X_umap[mask, 0], X_umap[mask, 1], s=5, alpha=0.5,
+                   color=cmap2(i), label=label, rasterized=True)
+    ax.set_title("UMAP — Leiden Cluster")
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    if len(unique_clusters) <= 12:
+        ax.legend(markerscale=3, fontsize=8, title="Cluster")
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {save_path}")
+
+
 # ── 3D diffusion manifold ───────────────────────────────────────────
 
 def plot_3d_manifold(diff_coords, color, save_path, title="3D Diffusion Manifold", cmap="plasma"):
