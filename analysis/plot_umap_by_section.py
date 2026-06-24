@@ -1,14 +1,14 @@
 """Pure-plotting diagnostic: UMAP scatter colored by section_number.
 
-Loads an existing run's adata.h5ad (already embedded/clustered/DPT'd) and
-produces two PNGs showing whether 2M-1 and 2M-2 patches are interspersed
-(Harmony aligned them) or still spatially segregated (Harmony under-
-corrected). Does NOT re-run any pipeline stage.
+Loads an existing run's adata_full.h5ad (already embedded/clustered/DPT'd)
+and produces two PNGs showing whether 2M-1 and 2M-2 patches are
+interspersed (Harmony aligned them) or still spatially segregated (Harmony
+under-corrected). Does NOT re-run any pipeline stage.
 
 Usage:
     python analysis/plot_umap_by_section.py <run_dir>
 
-<run_dir> must contain adata.h5ad. Output PNGs are written to
+<run_dir> must contain adata_full.h5ad. Output PNGs are written to
 <run_dir>/diagnostics/.
 """
 
@@ -28,7 +28,7 @@ def main():
         sys.exit(1)
 
     run_dir = Path(sys.argv[1])
-    h5ad_path = run_dir / "adata.h5ad"
+    h5ad_path = run_dir / "adata_full.h5ad"
     if not h5ad_path.exists():
         print(f"ERROR: {h5ad_path} does not exist.")
         sys.exit(1)
