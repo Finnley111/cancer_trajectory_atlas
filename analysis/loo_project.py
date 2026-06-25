@@ -103,6 +103,11 @@ def main():
             "Cache and reference run must use identical extraction settings."
         )
 
+    # Persist the per-patch projected pseudotime so downstream analyses
+    # (e.g. out-of-fold morphology correlations) can reuse it without
+    # re-running projection.
+    np.save(args.output_dir / f"loo_projected_pt_{slide_name}.npy", projected_pt)
+
     # Primary metric: paired Spearman rho (patch i vs patch i)
     spearman_rho, spearman_p = spearmanr(inmanifold_pt, projected_pt)
 
