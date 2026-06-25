@@ -1,10 +1,11 @@
 """Quantitative batch-mixing diagnostic: kNN section-purity on a saved embedding.
 
 Pure post-hoc analysis over an existing run's adata_full.h5ad. Does NOT
-re-run PCA, Harmony, clustering, or DPT — it reads the already-computed
-obsm['X_pca_original'] (pre-Harmony) and obsm['X_pca_harmony'] (post-Harmony)
-representations and scores how well-mixed obs['section_number'] is in each,
-using the same k/metric the live pipeline uses for its Leiden neighbor graph.
+re-run PCA, Harmony, scVI, clustering, or DPT — it reads whichever of
+obsm['X_pca_original'] (pre-correction), obsm['X_pca_harmony']
+(post-Harmony), and obsm['X_scvi'] (post-scVI) are present and scores how
+well-mixed obs['section_number'] is in each, using the same k/metric the
+live pipeline uses for its Leiden neighbor graph.
 """
 
 import inspect
@@ -74,12 +75,18 @@ def compute_batch_mixing_report(adata_path) -> dict:
         X_harmony = np.asarray(adata.obsm["X_pca_harmony"])
         harmony_score = knn_batch_purity(X_harmony, section_labels, k, metric)
 
+    scvi_score = None
+    if "X_scvi" in adata.obsm:
+        X_scvi = np.asarray(adata.obsm["X_scvi"])
+        scvi_score = knn_batch_purity(X_scvi, section_labels, k, metric)
+
     sections, counts = np.unique(section_labels, return_counts=True)
     per_section_counts = {s: int(c) for s, c in zip(sections, counts)}
 
     return {
         "raw_pca": raw_pca_score,
         "harmony": harmony_score,
+        "scvi": scvi_score,
         "k_used": k,
         "n_patches": int(section_labels.shape[0]),
         "per_section_counts": per_section_counts,

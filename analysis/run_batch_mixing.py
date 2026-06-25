@@ -34,9 +34,10 @@ def main():
     save_json(report, out_path)
 
     harmony_str = f"{report['harmony']:.3f}" if report["harmony"] is not None else "N/A"
+    scvi_str = f"{report['scvi']:.3f}" if report["scvi"] is not None else "N/A"
     print(
         f"Batch mixing (k={report['k_used']}, n={report['n_patches']}): "
-        f"raw_pca={report['raw_pca']:.3f} harmony={harmony_str} "
+        f"raw_pca={report['raw_pca']:.3f} harmony={harmony_str} scvi={scvi_str} "
         f"chance_baseline={report['chance_baseline']:.3f}"
     )
     print(f"Saved: {out_path}")

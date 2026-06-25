@@ -480,12 +480,24 @@ def run_pipeline(cfg: PipelineConfig):
 
     scaler, pca, X_pca = fit_pca(features, variance_target=0.95)
 
-    # Optional Harmony batch correction — applied in PCA space before clustering
-    # and DPT so both use the same corrected representation.
+    # Batch correction backend — applied in PCA space before clustering and
+    # DPT so both use the same corrected representation. cfg.batch_method
+    # overrides cfg.use_harmony when explicitly set; None falls back to the
+    # legacy use_harmony flag so existing job scripts are unaffected.
+    effective_batch_method = cfg.batch_method or ("harmony" if cfg.use_harmony else "none")
+
     X_embed = X_pca
-    if cfg.use_harmony:
+    scvi_model = None
+    if effective_batch_method == "harmony":
         from .analysis.harmony import apply_harmony
         X_embed = apply_harmony(X_pca, slide_names, slide_ids, key=cfg.harmony_key)
+    elif effective_batch_method == "scvi":
+        from .analysis.scvi_integration import apply_scvi
+        X_embed, scvi_model = apply_scvi(
+            X_pca, slide_names, slide_ids,
+            n_latent=cfg.scvi_n_latent, n_layers=cfg.scvi_n_layers,
+            n_hidden=cfg.scvi_n_hidden, max_epochs=cfg.scvi_max_epochs,
+        )
 
     umap_reducer, X_umap = run_umap(X_embed)
 
@@ -524,9 +536,12 @@ def run_pipeline(cfg: PipelineConfig):
     adata.obs["mouse_id"]       = [slide_names[sid].split("-")[0] for sid in slide_ids]
     adata.obs["section_number"] = [_parse_section(slide_names[sid]) for sid in slide_ids]
 
-    if cfg.use_harmony:
+    if effective_batch_method in ("harmony", "scvi"):
         adata.obsm["X_pca_original"] = X_pca.astype(np.float32)
-        adata.obsm["X_pca_harmony"]  = X_embed.astype(np.float32)
+    if effective_batch_method == "harmony":
+        adata.obsm["X_pca_harmony"] = X_embed.astype(np.float32)
+    elif effective_batch_method == "scvi":
+        adata.obsm["X_scvi"] = X_embed.astype(np.float32)
 
     compute_diffusion_map(adata, n_neighbors=cfg.diffmap_neighbors, n_comps=cfg.diffmap_comps)
 
@@ -638,6 +653,13 @@ def run_pipeline(cfg: PipelineConfig):
     io.save_pickle(pca, output_dir / "pca.pkl")
     io.save_pickle(umap_reducer, output_dir / "umap_reducer.pkl")
 
+    if scvi_model is not None:
+        scvi_dir = output_dir / "scvi"
+        scvi_dir.mkdir(exist_ok=True)
+        np.save(scvi_dir / "latent.npy", X_embed)
+        scvi_model.save(scvi_dir / "model", overwrite=True)
+        print(f"  scVI model + latent: {scvi_dir}")
+
     io.save_json(slide_check, output_dir / "slide_independence.json")
 
     # Save AtlasProjector for LOO projection analysis (Experiment 2)
@@ -736,6 +758,19 @@ Examples:
     parser.add_argument("--harmony-key", type=str, default="section_number",
                         choices=["slide_id", "section_number", "mouse_id"],
                         help="Batch grouping variable for Harmony (default: section_number)")
+    parser.add_argument("--batch-method", type=str, default=None,
+                        choices=["none", "harmony", "scvi"],
+                        help="Batch correction backend. Overrides --harmony when set. "
+                             "Default: None (falls back to --harmony, i.e. existing "
+                             "behavior is unchanged if this flag is omitted).")
+    parser.add_argument("--scvi-n-latent", type=int, default=30,
+                        help="scVI latent space dimensionality (default: 30)")
+    parser.add_argument("--scvi-n-layers", type=int, default=2,
+                        help="scVI encoder/decoder hidden layer count (default: 2)")
+    parser.add_argument("--scvi-n-hidden", type=int, default=128,
+                        help="scVI nodes per hidden layer (default: 128)")
+    parser.add_argument("--scvi-max-epochs", type=int, default=400,
+                        help="scVI max training epochs (default: 400)")
     parser.add_argument("--diffmap-neighbors", type=int, default=30,
                         help="k-NN neighbors for diffusion map (default: 30)")
     parser.add_argument("--diffmap-comps", type=int, default=10,
@@ -814,6 +849,11 @@ Examples:
         use_stardist=args.use_stardist,
         use_harmony=args.harmony,
         harmony_key=args.harmony_key,
+        batch_method=args.batch_method,
+        scvi_n_latent=args.scvi_n_latent,
+        scvi_n_layers=args.scvi_n_layers,
+        scvi_n_hidden=args.scvi_n_hidden,
+        scvi_max_epochs=args.scvi_max_epochs,
         diffmap_neighbors=args.diffmap_neighbors,
         diffmap_comps=args.diffmap_comps,
         slide_filter=slide_filter,

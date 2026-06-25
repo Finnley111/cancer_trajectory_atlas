@@ -41,6 +41,18 @@ class PipelineConfig:
     use_harmony: bool = False
     harmony_key: str = "section_number"
 
+    # Batch correction backend selector. None = fall back to use_harmony
+    # (legacy behavior, keeps existing job scripts unchanged). "none",
+    # "harmony", or "scvi" override use_harmony when explicitly set.
+    batch_method: Optional[str] = None
+
+    # scVI batch correction (alternative to Harmony). Operates on the same
+    # post-PCA matrix Harmony receives, batch key is always section_number.
+    scvi_n_latent: int = 30
+    scvi_n_layers: int = 2
+    scvi_n_hidden: int = 128
+    scvi_max_epochs: int = 400
+
     # Slide subset filter (None = all slides)
     slide_filter: list = None
 
