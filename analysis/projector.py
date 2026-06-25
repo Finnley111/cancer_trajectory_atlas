@@ -42,18 +42,33 @@ class AtlasProjector:
         proj.pca_ = pca
         proj.umap_reducer_ = umap_reducer
         proj.adata_train_ = adata_train
-        proj.cluster_centroids_ = cluster_centroids
 
-        # Train a KNN pseudotime regressor as the fallback path.
-        # Use raw (pre-Harmony) PCA so that projection of new data is consistent:
-        # project() applies scaler+PCA to get raw PCA, and KNN must be trained on the same.
-        # If Harmony was used, raw PCA is stored in obsm["X_pca_original"].
-        print("  Training KNN pseudotime regressor (fallback)...")
+        # project() applies scaler+PCA to get raw PCA features, so both centroid
+        # matching and KNN pseudotime must be trained in that same space.
+        # When Harmony or scVI was used, the pre-correction PCA is in X_pca_original.
         if "X_pca_original" in adata_train.obsm:
             train_pca = adata_train.obsm["X_pca_original"]
-            print("  Using X_pca_original (pre-Harmony) for KNN to match projection input.")
+            print("  Using X_pca_original (pre-Harmony/scVI) for KNN to match projection input.")
         else:
             train_pca = adata_train.X
+
+        # With scVI the centroids are in the 30-dim latent space but project()
+        # outputs PCA-dim features (e.g. 242).  Detect the mismatch and recompute
+        # centroids in PCA space so kneighbors() sees consistent dimensions.
+        sample_centroid = next(iter(cluster_centroids.values()))[0]
+        if sample_centroid.shape[0] != train_pca.shape[1]:
+            print(f"  Centroid dim ({sample_centroid.shape[0]}) != PCA dim "
+                  f"({train_pca.shape[1]}); recomputing centroids in PCA space.")
+            cluster_arr = adata_train.obs["cluster"].values
+            proj.cluster_centroids_ = {
+                label: (train_pca[cluster_arr == label].mean(axis=0), None)
+                for label in sorted(set(cluster_arr))
+            }
+        else:
+            proj.cluster_centroids_ = cluster_centroids
+
+        # Train a KNN pseudotime regressor as the fallback path.
+        print("  Training KNN pseudotime regressor (fallback)...")
         train_pt = adata_train.obs["pseudotime"].values
         proj.knn_pseudotime_ = KNeighborsRegressor(
             n_neighbors=min(15, len(train_pca) - 1),
@@ -123,6 +138,32 @@ class AtlasProjector:
         # Assign clusters by nearest centroid in PCA space.
         centroids_ids = sorted(self.cluster_centroids_.keys())
         centroid_matrix = np.array([self.cluster_centroids_[c][0] for c in centroids_ids])
+
+        # scVI stores centroids in its 30-dim latent space, but project() produces
+        # PCA-dim features (e.g. 242).  On the load() path the saved JSON centroids
+        # still carry scVI dims, so detect and fix the mismatch here too.
+        if centroid_matrix.shape[1] != X_pca.shape[1]:
+            if (self.adata_train_ is not None
+                    and "X_pca_original" in self.adata_train_.obsm):
+                print(f"  Centroid dim ({centroid_matrix.shape[1]}) != projection dim "
+                      f"({X_pca.shape[1]}); recomputing centroids from X_pca_original.")
+                train_pca = self.adata_train_.obsm["X_pca_original"]
+                cluster_arr = self.adata_train_.obs["cluster"].values
+                self.cluster_centroids_ = {
+                    label: (train_pca[cluster_arr == label].mean(axis=0), None)
+                    for label in sorted(set(cluster_arr))
+                }
+                centroids_ids = sorted(self.cluster_centroids_.keys())
+                centroid_matrix = np.array(
+                    [self.cluster_centroids_[c][0] for c in centroids_ids]
+                )
+            else:
+                raise ValueError(
+                    f"Centroid dim ({centroid_matrix.shape[1]}) != projection dim "
+                    f"({X_pca.shape[1]}).  Projector was saved with scVI centroids "
+                    f"but adata_train_ is unavailable.  Re-run LOO training to rebuild."
+                )
+
         nbrs = NearestNeighbors(n_neighbors=1, metric="euclidean")
         nbrs.fit(centroid_matrix)
         _, indices = nbrs.kneighbors(X_pca)
