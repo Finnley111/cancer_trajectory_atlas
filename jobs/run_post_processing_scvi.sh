@@ -65,6 +65,14 @@ python -m cancer_trajectory_atlas.visualize.scvi_postprocess \
     --leiden-resolution "$LEIDEN_RES"
 
 echo ""
+echo "=== Interactive Plotly figures ==="
+
+python -m cancer_trajectory_atlas.visualize.interactive_plotly \
+    --run-dir       "$SCVI_RUN_DIR" \
+    --output-dir    "$SCVI_RUN_DIR/postprocess/interactive" \
+    --max-points-3d 12000
+
+echo ""
 echo "============================================"
 echo "  POST-PROCESSING COMPLETE"
 echo "============================================"
@@ -75,3 +83,4 @@ for OUT_DIR in "${BASELINE_DIRS[@]}"; do
     echo "  $OUT_DIR/patch_export/"
 done
 echo "  $SCVI_RUN_DIR/postprocess/"
+echo "  $SCVI_RUN_DIR/postprocess/interactive/"
