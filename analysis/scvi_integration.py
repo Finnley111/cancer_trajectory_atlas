@@ -9,14 +9,20 @@ Input is the SAME post-PCA matrix Harmony receives (continuous, already
 standardized+PCA'd Phikon features) — NOT a counts matrix. scVI is
 configured with gene_likelihood="normal" for this reason.
 
-use_observed_lib_size=False: scVI's default architecture estimates a
-per-cell library size as log(sum of X), which assumes non-negative
-count-like data. PCA components are mean-centered and routinely negative,
-so the default would feed log() a negative/near-zero value and produce
-NaNs. Setting use_observed_lib_size=False makes the model learn library
-size as a latent variable instead of computing it from the (here,
-meaningless) row sum — the standard fix for applying SCVI to continuous,
-non-count inputs.
+Two scVI defaults assume count data and must be disabled for this
+continuous input, or training produces NaNs immediately on the first batch:
+
+- use_observed_lib_size=False: the default estimates a per-cell library
+  size as log(sum of X), which assumes non-negative count-like data. PCA
+  components are mean-centered and routinely negative, so the default
+  would feed log() a negative/near-zero value. This makes the model learn
+  library size as a latent variable instead of computing it from the
+  (here, meaningless) row sum.
+- log_variational=False: the encoder applies log(1+x) to its input by
+  default, again assuming non-negative counts. For x <= -1 (common in
+  standardized PCA output) this produces NaN/-inf in the very first
+  encoder forward pass, before any training even happens. Disabling it
+  feeds the encoder the raw continuous values directly.
 
 Batch key: section_number only ("2M-1" vs "2M-2") — this backend exists
 specifically to test whether a more expressive nonlinear correction closes
@@ -81,7 +87,8 @@ def apply_scvi(
     print(
         f"  Training scVI (n_latent={n_latent}, n_layers={n_layers}, "
         f"n_hidden={n_hidden}, max_epochs={max_epochs}, "
-        f"gene_likelihood=normal, use_observed_lib_size=False)..."
+        f"gene_likelihood=normal, use_observed_lib_size=False, "
+        f"log_variational=False)..."
     )
     model = scvi.model.SCVI(
         adata_tmp,
@@ -90,6 +97,13 @@ def apply_scvi(
         n_hidden=n_hidden,
         gene_likelihood="normal",
         use_observed_lib_size=False,
+        # scVI's encoder applies log(1+x) to its input by default
+        # (log_variational=True), which assumes non-negative count data.
+        # X_pca is mean-centered/standardized and routinely negative, so
+        # log(1+x) for x <= -1 produces NaN on the very first forward pass.
+        # Disable it — the data is already continuous, no count-style
+        # input transform is appropriate here.
+        log_variational=False,
     )
     model.train(max_epochs=max_epochs)
 
