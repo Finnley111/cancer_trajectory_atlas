@@ -58,16 +58,22 @@ def compute_batch_mixing_report(adata_path) -> dict:
         raise ValueError(
             f"adata.obs has no 'section_number' column. Found: {list(adata.obs.columns)}"
         )
-    if "X_pca_original" not in adata.obsm:
-        raise ValueError(
-            f"adata.obsm has no 'X_pca_original'. Found: {list(adata.obsm.keys())}. "
-            "This run may not have been a --harmony run."
-        )
-
     section_labels = adata.obs["section_number"].astype(str).to_numpy()
     k, metric = get_pipeline_k_and_metric()
 
-    X_raw = np.asarray(adata.obsm["X_pca_original"])
+    # For harmony/scVI runs the pre-correction PCA is stored as X_pca_original.
+    # For no-correction runs adata.X IS the PCA embedding (X_embed == X_pca).
+    if "X_pca_original" in adata.obsm:
+        X_raw = np.asarray(adata.obsm["X_pca_original"])
+        print(f"  Using obsm['X_pca_original'] for raw_pca score.")
+    elif adata.X is not None:
+        X_raw = np.asarray(adata.X)
+        print(f"  X_pca_original absent (no-correction run) — using adata.X as raw_pca.")
+    else:
+        raise ValueError(
+            f"adata.obsm has no 'X_pca_original' and adata.X is None. "
+            f"Found obsm keys: {list(adata.obsm.keys())}"
+        )
     raw_pca_score = knn_batch_purity(X_raw, section_labels, k, metric)
 
     harmony_score = None
