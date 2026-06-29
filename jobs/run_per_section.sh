@@ -141,6 +141,12 @@ for SECTION in "${SECTIONS[@]}"; do
     echo ""
     echo "=== [4/5] Within-section LOO: section $SECTION (${#SECTION_SLIDES[@]} folds) ==="
 
+    # Phase B pairs projected PT against results.csv patch-by-patch, so the
+    # held-out slide must be loaded with the FULL RUN's cap (not the LOO
+    # training cap, which differs because median is over 7 slides, not 8).
+    FULL_RUN_CAP=$(cat "$OUT_DIR/active_cap.txt")
+    echo "  Full-run active cap: $FULL_RUN_CAP patches/slide (used for Phase B)"
+
     LOO_DIRS=()
 
     for HELD_OUT in "${SECTION_SLIDES[@]}"; do
@@ -177,11 +183,9 @@ for SECTION in "${SECTIONS[@]}"; do
             --slides              "$TRAINING_CSV"
 
         # Phase B — project held-out slide onto the LOO manifold
-        # Forward the active patch cap so projection matches training exactly
-        ACTIVE_CAP=$(cat "$LOO_OUT/active_cap.txt")
         CAP_ARGS=()
-        if [ "$ACTIVE_CAP" -gt 0 ]; then
-            CAP_ARGS=(--max-patches-per-slide "$ACTIVE_CAP")
+        if [ "$FULL_RUN_CAP" -gt 0 ]; then
+            CAP_ARGS=(--max-patches-per-slide "$FULL_RUN_CAP")
         fi
 
         python -m cancer_trajectory_atlas.analysis.loo_project \
