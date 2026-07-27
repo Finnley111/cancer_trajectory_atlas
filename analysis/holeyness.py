@@ -589,7 +589,7 @@ def main() -> None:
     missing_cols = [c for c in REQUIRED_RESULTS_COLS if c not in results_df.columns]
     if missing_cols:
         sys.exit(f"ERROR: results.csv missing columns: {missing_cols}")
-    results_df = results_df[REQUIRED_RESULTS_COLS + ["slide_name"]].drop_duplicates()
+    results_df = results_df[REQUIRED_RESULTS_COLS].drop_duplicates()
     results_df = results_df[results_df["slide_name"].isin(pipeline_slides)].copy()
     n_patches_total = len(results_df)
     print(f"  Patches: {n_patches_total} across {results_df['slide_name'].nunique()} slides")
