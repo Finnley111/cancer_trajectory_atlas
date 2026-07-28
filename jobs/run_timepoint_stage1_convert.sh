@@ -83,6 +83,24 @@ while read -r stem; do
   echo -n "  $stem.ndpi : "
   ls -lh "$NDPI_DIR/$stem.ndpi" 2>/dev/null || echo "NOT FOUND"
 done < "$SLIDE_LIST"
+
+# run_all.py --convert has NO slide-list filtering -- it globs and converts EVERY
+# .ndpi file found in NDPI_DIR, not just the ones in $SLIDE_LIST. Warn loudly if
+# there are extras, since (a) they burn time/memory for nothing this pass, and
+# (b) a single corrupted/unrelated file among them will crash the ENTIRE
+# conversion job (no per-file error handling in that existing code), including
+# the slides you actually need.
+TOTAL_NDPI=$(ls "$NDPI_DIR"/*.ndpi 2>/dev/null | wc -l)
+EXPECTED_COUNT=$(grep -c . "$SLIDE_LIST")
+echo ""
+echo "Total .ndpi files in NDPI_DIR: $TOTAL_NDPI (slide list expects exactly $EXPECTED_COUNT)"
+if [ "$TOTAL_NDPI" -ne "$EXPECTED_COUNT" ]; then
+  echo "*** WARNING: NDPI_DIR has $TOTAL_NDPI files but only $EXPECTED_COUNT are in the slide"
+  echo "*** list. run_all.py --convert will try to convert ALL of them -- extra files waste"
+  echo "*** time/memory, and if ANY of them is corrupted it will crash this whole job before"
+  echo "*** the slides you actually need get converted. Move unwanted files out of NDPI_DIR"
+  echo "*** before proceeding if you want to convert only the pre-specified slides."
+fi
 echo "======================"
 echo ""
 
