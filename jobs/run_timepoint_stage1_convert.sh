@@ -33,11 +33,22 @@
 #   sbatch ~/cancer_trajectory_atlas/jobs/run_timepoint_stage1_convert.sh
 
 #SBATCH --account=def-lmarti46
-#SBATCH --time=02:00:00
+#SBATCH --time=03:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --mem=128G
 #SBATCH --job-name=timepoint_stage1_convert
 #SBATCH --output=logs/timepoint_stage1_convert-%j.out
+
+# NOTE (2026-07-28): originally --mem=32G, which OOM-killed on the first real run.
+# NDPI conversion reads the ENTIRE slide at full resolution into memory via
+# OpenSlide before any left-crop/downscale happens (run_all.py's existing,
+# unmodified convert_ndpi_to_left_half_png) -- a few-hundred-MB compressed NDPI can
+# decompress to tens of GB raw RGBA. The original pipeline's own conversion job
+# (jobs/convert_ndpi.sh) already uses --mem=64G for this same operation; bumped to
+# 128G here for headroom since these timepoint slides' raw dimensions haven't been
+# profiled yet. If 128G still isn't enough for the largest slide, check its raw
+# level_dimensions[0] (cheap -- just reads the NDPI header, no pixel decode) and
+# size --mem to comfortably exceed width*height*4 bytes for that slide specifically.
 
 set -euo pipefail
 mkdir -p logs
