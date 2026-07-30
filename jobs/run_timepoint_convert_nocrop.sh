@@ -46,7 +46,7 @@
 #       --output-dir       $SCRATCH/results/timepoint_projection/stage1_convert_nocrop
 
 #SBATCH --account=def-lmarti46
-#SBATCH --time=03:00:00
+#SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=128G
 #SBATCH --job-name=timepoint_convert_nocrop
