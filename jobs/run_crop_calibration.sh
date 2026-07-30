@@ -16,7 +16,7 @@
 # made AFTER reviewing this job's output, not by this job.
 #
 # Reads (all read-only):
-#   $SCRATCH/data/MCF7_x5/*.ndpi                      (16 original slides --
+#   $SCRATCH/data/ndpi/*.ndpi                          (16 original slides --
 #     NOTE: paths.json's "raw_ndpi" says ~/scratch/data/ndpi, which does NOT
 #     match this, the actual proven-working convention already used by
 #     jobs/convert_ndpi.sh -- same discrepancy class as the documented
@@ -47,7 +47,7 @@ set -euo pipefail
 mkdir -p logs
 
 # ── Parameters ────────────────────────────────────────────────────────────────
-ORIGINAL_NDPI_DIR="$SCRATCH/data/MCF7_x5"
+ORIGINAL_NDPI_DIR="$SCRATCH/data/ndpi"
 ORIGINAL_SLIDE_LIST_1="$HOME/cancer_trajectory_atlas/jobs/slides_section1.txt"
 ORIGINAL_SLIDE_LIST_2="$HOME/cancer_trajectory_atlas/jobs/slides_section2.txt"
 
