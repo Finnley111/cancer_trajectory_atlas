@@ -48,9 +48,19 @@
 #SBATCH --account=def-lmarti46
 #SBATCH --time=00:30:00
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=16G
+#SBATCH --mem=64G
 #SBATCH --job-name=timepoint_stage2_stain_check
 #SBATCH --output=logs/timepoint_stage2_stain_check-%j.out
+
+# NOTE on --mem: bumped from an original 16G after jobs/run_stage2_reference_threshold.sh
+# (same underlying compute_slide_stain_features function) OOM-killed at 32G. Root
+# cause: full-resolution stain-feature computation feeds skimage's rgb2hed a
+# whole-slide array (tens of thousands of pixels per side), which upcasts the
+# entire thing to float64 internally -- tens of GB of transient memory for one
+# slide. Fixed at the source (default --downsample-factor=8 below), so 64G here
+# is a safety margin, not a re-guess -- and this job also reads the FULL-WIDTH
+# (no-crop) timepoint PNGs, which are larger than the left-cropped originals
+# that OOM'd, hence matching that job's bumped 64G rather than staying lower.
 
 set -euo pipefail
 mkdir -p logs
@@ -60,6 +70,7 @@ NEW_SLIDE_LIST="$HOME/cancer_trajectory_atlas/jobs/slides_timepoint.txt"
 NEW_PNG_DIR="$SCRATCH/data/timepoint_x5_full"
 EXISTING_SLIDE_LIST="$HOME/cancer_trajectory_atlas/jobs/slides_section1.txt"
 EXISTING_PNG_DIR="$SCRATCH/data/MCF7_x5_cropped"
+DOWNSAMPLE_FACTOR=8
 REFERENCE_THRESHOLD_JSON="$SCRATCH/results/timepoint_projection/stage2_reference_threshold/stage2_reference_threshold.json"
 
 OUTPUT_DIR="$SCRATCH/results/timepoint_projection/stage2_stain_check"
@@ -69,6 +80,7 @@ echo "  Timepoint projection — Stage 2: stain batch check"
 echo "  Job ID                   : ${SLURM_JOB_ID:-local}"
 echo "  New slides                : $NEW_SLIDE_LIST ($NEW_PNG_DIR)"
 echo "  Existing 2M-1              : $EXISTING_SLIDE_LIST ($EXISTING_PNG_DIR)"
+echo "  Downsample factor          : $DOWNSAMPLE_FACTOR (memory fix -- see --mem note above)"
 echo "  Reference threshold JSON   : $REFERENCE_THRESHOLD_JSON"
 echo "  Output dir                 : $OUTPUT_DIR"
 echo "========================================================"
@@ -93,6 +105,7 @@ python -m cancer_trajectory_atlas.analysis.timepoint_stage2_stain_check \
     --new-png-dir              "$NEW_PNG_DIR" \
     --existing-slide-list      "$EXISTING_SLIDE_LIST" \
     --existing-png-dir         "$EXISTING_PNG_DIR" \
+    --downsample-factor        "$DOWNSAMPLE_FACTOR" \
     --reference-threshold-json "$REFERENCE_THRESHOLD_JSON" \
     --output-dir                "$OUTPUT_DIR"
 

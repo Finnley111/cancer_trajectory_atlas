@@ -33,13 +33,20 @@
 #SBATCH --account=def-lmarti46
 #SBATCH --time=00:30:00
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --job-name=stage2_reference_threshold
 #SBATCH --output=logs/stage2_reference_threshold-%j.out
 
-# NOTE on --mem=32G: this reads 16 ALREADY-CONVERTED, left-cropped PNGs at full
-# resolution (no NDPI decode at all) -- far lighter than any conversion job.
-# 32G is defensive headroom, not a measured requirement.
+# NOTE on --mem: a first attempt at 32G OOM-killed. Root cause: stain features
+# were computed at full resolution (downsample_factor=1), and
+# _deconvolve_hematoxylin (skimage's rgb2hed) upcasts its ENTIRE input to
+# float64 internally -- for a whole-slide image (tens of thousands of pixels
+# per side, not the 112x112 patches that function was designed for), that's
+# tens of GB of transient arrays for a single slide. Fixed at the source:
+# stage2_reference_threshold.py / timepoint_stage2_stain_check.py now default
+# --downsample-factor to 8 (a slide-level mean/median doesn't need per-pixel
+# resolution), which cuts peak memory by ~64x. 64G here is now a generous
+# safety margin on top of that fix, not a re-guess at the same problem.
 
 set -euo pipefail
 mkdir -p logs
@@ -48,6 +55,7 @@ mkdir -p logs
 SECTION1_SLIDE_LIST="$HOME/cancer_trajectory_atlas/jobs/slides_section1.txt"
 SECTION2_SLIDE_LIST="$HOME/cancer_trajectory_atlas/jobs/slides_section2.txt"
 PNG_DIR="$SCRATCH/data/MCF7_x5_cropped"
+DOWNSAMPLE_FACTOR=8
 REFERENCE_MEASURE="h_intensity_mean_masked"
 PATCH_LEVEL_REFERENCE_R=0.71
 
@@ -59,6 +67,7 @@ echo "  Job ID                  : ${SLURM_JOB_ID:-local}"
 echo "  Section 1 (2M-1) slides : $SECTION1_SLIDE_LIST"
 echo "  Section 2 (2M-2) slides : $SECTION2_SLIDE_LIST"
 echo "  PNG dir (read-only)     : $PNG_DIR"
+echo "  Downsample factor       : $DOWNSAMPLE_FACTOR (memory fix -- see --mem note above)"
 echo "  Reference measure       : $REFERENCE_MEASURE"
 echo "  Patch-level reference r : $PATCH_LEVEL_REFERENCE_R (old D3 number, comparison only)"
 echo "  Output dir               : $OUTPUT_DIR"
@@ -83,6 +92,7 @@ python -m cancer_trajectory_atlas.analysis.stage2_reference_threshold \
     --section1-slide-list      "$SECTION1_SLIDE_LIST" \
     --section2-slide-list      "$SECTION2_SLIDE_LIST" \
     --png-dir                  "$PNG_DIR" \
+    --downsample-factor        "$DOWNSAMPLE_FACTOR" \
     --reference-measure        "$REFERENCE_MEASURE" \
     --patch-level-reference-r  "$PATCH_LEVEL_REFERENCE_R" \
     --output-dir                "$OUTPUT_DIR"

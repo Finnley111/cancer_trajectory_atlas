@@ -145,7 +145,15 @@ def _tissue_mask(rgb: np.ndarray) -> np.ndarray:
     return has_color & is_dense & not_white
 
 
-def compute_slide_stain_features(png_path: Path, downsample_factor: int = 1) -> dict:
+def compute_slide_stain_features(png_path: Path, downsample_factor: int = 8) -> dict:
+    """downsample_factor default is 8, NOT 1 -- these are whole-slide images
+    (tens of thousands of pixels per side), not the 112x112 patches
+    _deconvolve_hematoxylin/rgb2hed were designed for. rgb2hed upcasts its
+    entire input to float64 internally; at full resolution this OOM'd a 32G
+    job on a single slide (confirmed on Narval). A slide-level mean/median
+    tissue-masked stain statistic does not need per-pixel resolution --
+    downsampling by 8 still leaves millions of pixels per slide, which is
+    ample for a stable mean/median, while cutting peak memory by ~64x."""
     img = Image.open(png_path).convert("RGB")
     if downsample_factor > 1:
         img = img.resize(
@@ -161,14 +169,17 @@ def compute_slide_stain_features(png_path: Path, downsample_factor: int = 1) -> 
         "tissue_fraction_implausible": bool(tissue_fraction < MIN_PLAUSIBLE_TISSUE_FRACTION),
     }
     for i, ch in enumerate(RGB_CHANNEL_NAMES):
-        channel = rgb[:, :, i].astype(np.float64)
-        masked_vals = channel[mask]
+        # Mask/mean on the uint8 view first, THEN cast only the (much smaller)
+        # masked subset to float64 -- avoids ever materializing a full-image
+        # float64 copy per channel.
+        channel_u8 = rgb[:, :, i]
+        masked_vals = channel_u8[mask].astype(np.float64)
         features[f"rgb_mean_{ch}_masked"] = float(np.mean(masked_vals))
         features[f"rgb_median_{ch}_masked"] = float(np.median(masked_vals))
         # Whole-image, unmasked -- secondary/comparison quantity only (see
         # WHOLE_IMAGE_MEASURES); documents the background-dilution magnitude,
         # does not drive any gate.
-        features[f"rgb_mean_{ch}_whole_image_unmasked"] = float(np.mean(channel))
+        features[f"rgb_mean_{ch}_whole_image_unmasked"] = float(np.mean(channel_u8))
 
     h_channel = _deconvolve_hematoxylin(rgb)
     h_masked = h_channel[mask]
@@ -490,9 +501,11 @@ def main() -> None:
                         help="Output of analysis/stage2_reference_threshold.py, e.g. "
                              "$SCRATCH/results/timepoint_projection/stage2_reference_threshold/"
                              "stage2_reference_threshold.json")
-    parser.add_argument("--downsample-factor", default=1, type=int,
-                        help="Optional integer downsample before stain-feature computation "
-                             "(default 1 = full resolution, same as pipeline PNGs)")
+    parser.add_argument("--downsample-factor", default=8, type=int,
+                        help="Integer downsample before stain-feature computation (default 8 -- "
+                             "these are whole-slide images, not 112x112 patches; full resolution "
+                             "OOM'd a 32G job by feeding rgb2hed a tens-of-thousands-of-pixels "
+                             "array. Pass 1 only if you have a lot of memory to spare)")
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args()
 

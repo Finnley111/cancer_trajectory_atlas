@@ -37,6 +37,7 @@ CLI
       --section1-slide-list   ~/cancer_trajectory_atlas/jobs/slides_section1.txt \\
       --section2-slide-list   ~/cancer_trajectory_atlas/jobs/slides_section2.txt \\
       --png-dir               $SCRATCH/data/MCF7_x5_cropped \\
+      --downsample-factor     8 \\
       --reference-measure     h_intensity_mean_masked \\
       --patch-level-reference-r 0.71 \\
       --output-dir            $SCRATCH/results/timepoint_projection/stage2_reference_threshold
@@ -66,11 +67,13 @@ from .timepoint_stage2_stain_check import (
 )
 
 
-def compute_all_slide_features(slide_stems: list[str], png_dir: Path) -> list[dict]:
+def compute_all_slide_features(
+    slide_stems: list[str], png_dir: Path, downsample_factor: int = 8,
+) -> list[dict]:
     features = []
     for stem in slide_stems:
         png_path = _png_path(png_dir, stem)
-        feats = compute_slide_stain_features(png_path)
+        feats = compute_slide_stain_features(png_path, downsample_factor)
         print(f"  {stem}: tissue_fraction={feats['tissue_fraction']:.4f} "
               f"implausible={feats['tissue_fraction_implausible']}")
         features.append(feats)
@@ -268,6 +271,11 @@ def main() -> None:
                         help="e.g. jobs/slides_section2.txt (8 2M-2 slides)")
     parser.add_argument("--png-dir", required=True, type=Path,
                         help="Existing MCF7_x5_cropped dir -- READ ONLY, never modified")
+    parser.add_argument("--downsample-factor", default=8, type=int,
+                        help="Integer downsample before stain-feature computation (default 8 -- "
+                             "these are whole-slide images, not 112x112 patches; full resolution "
+                             "OOM'd a 32G job by feeding rgb2hed a tens-of-thousands-of-pixels "
+                             "array. Pass 1 only if you have a lot of memory to spare)")
     parser.add_argument("--reference-measure", default="h_intensity_mean_masked",
                         choices=HEMATOXYLIN_GATE_MEASURES,
                         help="Which gate measure's slide-level |r| becomes Stage 2's default "
@@ -290,9 +298,9 @@ def main() -> None:
 
     print("\n=== Computing per-slide tissue-masked stain features ===")
     print("-- 2M-1 --")
-    section1_features = compute_all_slide_features(section1_stems, args.png_dir)
+    section1_features = compute_all_slide_features(section1_stems, args.png_dir, args.downsample_factor)
     print("-- 2M-2 --")
-    section2_features = compute_all_slide_features(section2_stems, args.png_dir)
+    section2_features = compute_all_slide_features(section2_stems, args.png_dir, args.downsample_factor)
 
     print("\n=== Slide-level comparison (2M-1 vs 2M-2) ===")
     per_measure = compare_sections(section1_features, section2_features)
