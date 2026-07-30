@@ -70,7 +70,7 @@ CLI
       --ndpi-dir            $SCRATCH/data/timepoint_ndpi \\
       --png-dir             $SCRATCH/data/timepoint_x5_full \\
       --ndpi-level          0 \\
-      --original-ndpi-dir   $SCRATCH/data/MCF7_x5 \\
+      --original-ndpi-dir   $SCRATCH/data/ndpi \\
       --original-sample-stems 6027-4L-2M-1_x5 6028-4L-2M-1_x5 6029-4L-2M-1_x5 \\
       --mpp-tolerance-pct   2.0 \\
       --mpp-output-json     $SCRATCH/results/timepoint_projection/mpp_verification.json
@@ -345,8 +345,7 @@ def main() -> None:
     parser.add_argument("--ndpi-level", default=0, type=int)
     parser.add_argument("--original-ndpi-dir", required=True, type=Path,
                         help="Raw NDPI directory for the original 16 pipeline slides "
-                             "(e.g. $SCRATCH/data/MCF7_x5 -- same convention as "
-                             "analysis/crop_calibration.py), used only for the MPP "
+                             "(e.g. $SCRATCH/data/ndpi), used only for the MPP "
                              "pre-flight check")
     parser.add_argument("--original-sample-stems", nargs="+",
                         default=DEFAULT_ORIGINAL_SAMPLE_STEMS,
