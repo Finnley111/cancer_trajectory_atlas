@@ -259,6 +259,24 @@ def write_mpp_verification(result: dict, output_json: Path) -> None:
 
 # ── Conversion ─────────────────────────────────────────────────────────────────
 
+def _png_is_valid(png_path: Path) -> bool:
+    """Cheap integrity check (PIL's verify(), not a full pixel decode) --
+    catches truncated/corrupted files left behind by an interrupted prior run
+    (e.g. a walltime kill mid-write). `Path.exists()` alone can't distinguish
+    a complete PNG from a 0-byte or partial one; this closed the gap that let
+    a truncated timepoint PNG sit silently "converted" until Stage 2 actually
+    tried to read it. verify() leaves the file object unusable afterward, so
+    this always opens a fresh handle rather than reusing one for real work."""
+    from PIL import Image
+
+    try:
+        with Image.open(png_path) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
 def convert_ndpi_full_width(
     ndpi_paths: dict[str, Path],
     png_dir: Path,
@@ -266,11 +284,14 @@ def convert_ndpi_full_width(
     ndpi_scale: float,
 ) -> dict:
     """Converts each NDPI to a full-width (uncropped) PNG. Idempotent: if the
-    target PNG already exists, skips re-encoding but still (re-)records its
-    dimensions in the sidecar, matching run_all.py's own incremental-rerun
-    convention. Catches per-slide exceptions so one corrupted NDPI can't abort
-    the batch (all 7 expected slides here are already known-readable -- this
-    is a safety net, not a workaround for a known-bad file)."""
+    target PNG already exists AND passes an integrity check, skips
+    re-encoding but still (re-)records its dimensions in the sidecar,
+    matching run_all.py's own incremental-rerun convention. If a target PNG
+    exists but fails the integrity check (truncated/corrupted), it is
+    re-converted rather than silently trusted. Catches per-slide exceptions
+    so one corrupted NDPI can't abort the batch (all 7 expected slides here
+    are already known-readable -- this is a safety net, not a workaround for
+    a known-bad file)."""
     from PIL import Image
     import openslide  # lazy import -- only needed on Narval, where it's module-loaded
 
@@ -292,9 +313,14 @@ def convert_ndpi_full_width(
                 full_w = int(raw_w * ndpi_scale)
                 full_h = int(raw_h * ndpi_scale)
 
-                if out_path.exists():
-                    print(f"  SKIP (exists): {out_name}")
+                if out_path.exists() and _png_is_valid(out_path):
+                    print(f"  SKIP (exists, verified): {out_name}")
                 else:
+                    if out_path.exists():
+                        print(
+                            f"  WARNING: {out_name} exists but failed integrity check "
+                            f"(truncated/corrupted) -- re-converting"
+                        )
                     region = slide.read_region((0, 0), ndpi_level, (raw_w, raw_h))
                     img = region.convert("RGB")
                     if ndpi_scale != 1.0:
