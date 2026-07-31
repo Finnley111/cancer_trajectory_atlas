@@ -232,8 +232,12 @@ def build_inventory(ndpi_dirs: list[Path]) -> list[dict]:
             **parsed,
             "source_dir": f["source_dir"],
             "duplicate_in_both_dirs": f["duplicate_in_both_dirs"],
-            "file_size_bytes": f["path"].stat().st_size,
         }
+        try:
+            row["file_size_bytes"] = f["path"].stat().st_size
+        except OSError as e:
+            row["file_size_bytes"] = None
+            row["file_size_error"] = repr(e)
         try:
             meta = read_slide_metadata(f["path"])
             row.update(meta)
@@ -369,13 +373,13 @@ def write_report(rows: list[dict], counts: dict, mouse_6072: dict, confound: dic
         parse_flag = "yes" if r["parse_ok"] else f"**NO** ({r['parse_error']})"
         opens_flag = "yes" if r["opens_in_openslide"] else f"**NO** ({r['openslide_error']})"
         dims = f"{_fmt(r['level0_width'])}×{_fmt(r['level0_height'])}"
-        size_mb = r["file_size_bytes"] / (1024 * 1024)
+        size_mb = _fmt(r["file_size_bytes"] / (1024 * 1024)) if r["file_size_bytes"] is not None else "n/a"
         dup_flag = "**YES**" if r["duplicate_in_both_dirs"] else "no"
         lines.append(
             f"| {r['raw_stem']} | {Path(r['source_dir']).name} | {_fmt(r['mouse_id'])} | "
             f"{_fmt(r['side'])} | {_fmt(r['timepoint_weeks'])} | "
             f"{r['suffix_raw'] or 'no'} | {parse_flag} | {opens_flag} | {dims} | "
-            f"{_fmt(r['mpp_x'])} | {_fmt(r['mpp_y'])} | {size_mb:.1f} | {dup_flag} |"
+            f"{_fmt(r['mpp_x'])} | {_fmt(r['mpp_y'])} | {size_mb} | {dup_flag} |"
         )
     lines.append("")
 

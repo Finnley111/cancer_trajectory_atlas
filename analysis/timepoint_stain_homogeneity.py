@@ -157,14 +157,23 @@ def validate_coarse_proxy(
     full-width PNG, computes masked stain stats both ways and compares. Per
     gate measure: Spearman rho (n=7) AND mean absolute relative difference
     (correlation alone can mislead at n=7). agreement_ok requires
-    rho >= VALIDATION_RHO_THRESHOLD."""
+    rho >= VALIDATION_RHO_THRESHOLD. Per-slide try/except -- one bad read
+    (corrupted NDPI, transient I/O error) must not crash this validation step
+    and take the whole (unattended, hours-long) job down with it; a failing
+    slide is recorded and excluded from the comparison instead."""
     coarse_vals: dict[str, list[float]] = {m: [] for m in GATE_MEASURES}
     png_vals: dict[str, list[float]] = {m: [] for m in GATE_MEASURES}
     per_slide = {}
+    failed_slides = {}
 
     for stem, ndpi_path, png_path in stems_with_ndpi_and_png:
-        coarse_feats = compute_stain_features_from_ndpi_coarse(ndpi_path)
-        png_feats = compute_slide_stain_features(png_path)
+        try:
+            coarse_feats = compute_stain_features_from_ndpi_coarse(ndpi_path)
+            png_feats = compute_slide_stain_features(png_path)
+        except Exception as e:
+            failed_slides[stem] = repr(e)
+            print(f"  {stem}: ERROR during validation {e!r} -- excluded from validation")
+            continue
         per_slide[stem] = {"coarse": coarse_feats, "png": png_feats}
         for m in GATE_MEASURES:
             coarse_vals[m].append(coarse_feats[m])
@@ -187,7 +196,9 @@ def validate_coarse_proxy(
         }
 
     return {
-        "n_slides": len(stems_with_ndpi_and_png),
+        "n_slides": len(per_slide),
+        "n_attempted": len(stems_with_ndpi_and_png),
+        "failed_slides": failed_slides,
         "rho_threshold": VALIDATION_RHO_THRESHOLD,
         "per_measure": per_measure,
         "per_slide": per_slide,
@@ -218,7 +229,6 @@ def aggregate_to_mouse_level(
         key = (row["mouse_id"], row["timepoint_weeks"])
         groups.setdefault(key, []).append(row)
 
-    mouse_ids_present = {mouse_id for (mouse_id, _weeks) in groups}
     mouse_id_counts = {}
     for (mouse_id, _weeks) in groups:
         mouse_id_counts[mouse_id] = mouse_id_counts.get(mouse_id, 0) + 1
@@ -349,10 +359,14 @@ def write_report(result: dict, output_dir: Path) -> None:
     lines.append("## Coarse-NDPI-level vs. full-res-PNG validation")
     lines.append("")
     lines.append(
-        f"n={val['n_slides']} slides with both a raw NDPI and an existing full-width PNG. "
+        f"n={val['n_slides']} of {val['n_attempted']} candidate slides (both a raw NDPI and an "
+        f"existing full-width PNG) successfully processed. "
         f"Agreement bar: Spearman rho >= {val['rho_threshold']} (chosen convention, not from "
         f"the task brief -- adjust if needed)."
     )
+    if val["failed_slides"]:
+        lines.append("")
+        lines.append(f"**Failed during validation (excluded):** {val['failed_slides']}")
     lines.append("")
     lines.append("| measure | rho | p | mean abs relative diff | agreement OK |")
     lines.append("|---|---|---|---|---|")
