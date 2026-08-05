@@ -27,25 +27,38 @@ Reuses, unmodified:
   From timepoint_stain_homogeneity.py (Stage B v1): aggregate_to_mouse_level,
   pairwise_group_comparisons, spearman_weeks_trend, build_verdict,
   resolve_reference_rank_biserial, TIMEPOINT_GROUPS,
-  compute_stain_features_from_ndpi_coarse, validate_coarse_proxy.
+  compute_stain_features_from_ndpi_coarse, VALIDATION_RHO_THRESHOLD.
   From timepoint_stage2_stain_check.py: compute_slide_stain_features (the
   full-resolution-PNG feature function -- default downsample_factor=8,
   designed for exactly this whole-slide-image case), GATE_MEASURES,
   HEMATOXYLIN_GATE_MEASURES, MEASURES, _fmt, _normalize_stem, _png_path.
+  From holeyness.py: _safe_spearman.
 
 What changes vs Stage B v1:
   - The MAIN computation (the one that actually feeds pairwise_group_
     comparisons / spearman_weeks_trend / build_verdict) now calls
     compute_slide_stain_features(png_path) for every usable slide, not
     compute_stain_features_from_ndpi_coarse(ndpi_path).
-  - validate_coarse_proxy is still run (now over all ~29 usable slides
-    instead of 7, since every one now has both a raw NDPI and a PNG) but is
-    reported as INFORMATIONAL ONLY, not a HALT gate. Stage B v1 HALTed on
+  - An informational coarse-vs-full-res comparison is still reported (now
+    over all ~29 usable slides instead of 7, since every one now has both a
+    raw NDPI and a PNG) but does NOT gate this run -- Stage B v1 HALTed on
     validation disagreement because it needed to decide whether to trust the
-    coarse proxy for slides that had no PNG yet -- there are no such slides
+    coarse proxy for slides that had no PNG yet; there are no such slides
     left in the corrected cohort, so nothing downstream depends on that
     agreement anymore. This is stated explicitly in the report rather than
     silently dropping the HALT behavior.
+  - NOTE: this comparison reuses Stage B v1's `validate_coarse_proxy` LOGIC
+    (rho + mean-abs-relative-difference formula, VALIDATION_RHO_THRESHOLD),
+    but not the function itself -- `validate_coarse_proxy` reads each PNG
+    itself, which would call the expensive `compute_slide_stain_features`
+    (hematoxylin deconvolution) a SECOND time per slide, on top of the main
+    computation's own call. `validate_coarse_vs_precomputed_fullres` below
+    reuses the full-res features already computed by
+    `compute_fullres_slide_features` and only reads the coarse NDPI side
+    fresh -- same comparison, same primitives imported, half the full-res
+    decode work. This mirrors the project's established pattern of
+    reproducing a small (~20-line) piece of glue locally while importing the
+    actual primitives (see Stage B v1's own docstring re: Stage 2).
 
 Consumes Stage A v2's inventory (timepoint_cohort_inventory_v2.py) for the
 corrected usable_slides list, and the existing stage2_reference_threshold.json
@@ -74,18 +87,23 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
+
+from .holeyness import _safe_spearman
 from .timepoint_stage2_stain_check import (
+    GATE_MEASURES,
     _fmt,
     _png_path,
     compute_slide_stain_features,
 )
 from .timepoint_stain_homogeneity import (
+    VALIDATION_RHO_THRESHOLD,
     aggregate_to_mouse_level,
     build_verdict,
+    compute_stain_features_from_ndpi_coarse,
     pairwise_group_comparisons,
     resolve_reference_rank_biserial,
     spearman_weeks_trend,
-    validate_coarse_proxy,
 )
 
 # The specific measures the task brief calls out for direct before/after
@@ -115,6 +133,68 @@ def compute_fullres_slide_features(usable_rows: list[dict], converted_png_dir: P
             failed[stem] = repr(e)
             print(f"  {stem}: ERROR {e!r} -- excluded from comparison")
     return slide_features, failed
+
+
+# ── Informational coarse-vs-full-res comparison (no redundant PNG read) ──────
+
+def validate_coarse_vs_precomputed_fullres(
+    usable_rows: list[dict], slide_features: dict[str, dict],
+) -> dict:
+    """Same comparison Stage B v1's validate_coarse_proxy makes (per gate
+    measure: Spearman rho + mean absolute relative difference, agreement_ok
+    at rho >= VALIDATION_RHO_THRESHOLD, both imported from Stage B v1 unmodified)
+    -- but takes the full-res PNG features that compute_fullres_slide_features
+    already computed instead of reading each PNG a second time. Only the
+    coarse NDPI side is read fresh here. Per-slide try/except mirrors Stage B
+    v1's own robustness convention -- one bad coarse read must not crash this
+    (purely informational) comparison or the job around it."""
+    coarse_vals: dict[str, list[float]] = {m: [] for m in GATE_MEASURES}
+    png_vals: dict[str, list[float]] = {m: [] for m in GATE_MEASURES}
+    per_slide = {}
+    failed_slides = {}
+
+    for r in usable_rows:
+        stem = r["raw_stem"]
+        if stem not in slide_features:
+            continue  # already excluded upstream (full-res PNG read failed)
+        ndpi_path = Path(r["source_dir"]) / f"{stem}.ndpi"
+        try:
+            coarse_feats = compute_stain_features_from_ndpi_coarse(ndpi_path)
+        except Exception as e:
+            failed_slides[stem] = repr(e)
+            print(f"  {stem}: ERROR during coarse-proxy comparison {e!r} -- excluded")
+            continue
+        png_feats = slide_features[stem]
+        per_slide[stem] = {"coarse": coarse_feats, "png": png_feats}
+        for m in GATE_MEASURES:
+            coarse_vals[m].append(coarse_feats[m])
+            png_vals[m].append(png_feats[m])
+
+    per_measure = {}
+    all_ok = True
+    for m in GATE_MEASURES:
+        c = np.array(coarse_vals[m], dtype=float)
+        p = np.array(png_vals[m], dtype=float)
+        rho, pval = _safe_spearman(c, p)
+        denom = np.where(np.abs(p) > 1e-9, np.abs(p), np.nan)
+        mean_abs_rel_diff = float(np.nanmean(np.abs(c - p) / denom))
+        agreement_ok = bool(np.isfinite(rho) and rho >= VALIDATION_RHO_THRESHOLD)
+        all_ok = all_ok and agreement_ok
+        per_measure[m] = {
+            "rho": rho, "p": pval,
+            "mean_abs_relative_difference": mean_abs_rel_diff,
+            "agreement_ok": agreement_ok,
+        }
+
+    return {
+        "n_slides": len(per_slide),
+        "n_attempted": len(usable_rows),
+        "failed_slides": failed_slides,
+        "rho_threshold": VALIDATION_RHO_THRESHOLD,
+        "per_measure": per_measure,
+        "per_slide": per_slide,
+        "all_gate_measures_agree": all_ok,
+    }
 
 
 # ── Comparison to Stage B v1 ──────────────────────────────────────────────────
@@ -328,22 +408,20 @@ def main() -> None:
     print(f"\nLoaded Stage A v2 inventory: {len(all_slides)} total slides, "
           f"{len(usable_slides)} usable")
 
-    # ── Informational validation: coarse-NDPI vs full-res PNG, all usable slides ──
-    print("\n=== Validating coarse-NDPI proxy against full-res PNG (informational only) ===")
-    validation_triples = []
-    for r in usable_slides:
-        png_path = _png_path(args.converted_png_dir, r["raw_stem"])
-        if png_path.exists():
-            validation_triples.append((r["raw_stem"], Path(r["source_dir"]) / f"{r['raw_stem']}.ndpi", png_path))
-    print(f"  {len(validation_triples)} usable slides have both NDPI and converted PNG")
-    validation = validate_coarse_proxy(validation_triples)
+    # ── Main computation: full-res PNG features for every usable slide ──
+    # Computed FIRST (not after a separate validation pass) so the informational
+    # coarse-vs-full-res comparison below can reuse these instead of reading
+    # each PNG a second time -- see validate_coarse_vs_precomputed_fullres's
+    # docstring for why that redundant read mattered enough to avoid.
+    print("\n=== Computing FULL-RESOLUTION stain features for all usable slides ===")
+    slide_features, feature_failures = compute_fullres_slide_features(usable_slides, args.converted_png_dir)
+
+    # ── Informational comparison: coarse-NDPI proxy vs already-computed full-res PNG ──
+    print("\n=== Comparing coarse-NDPI proxy against full-res PNG (informational only) ===")
+    validation = validate_coarse_vs_precomputed_fullres(usable_slides, slide_features)
     for m, v in validation["per_measure"].items():
         print(f"  {m}: rho={_fmt(v['rho'])} agreement_ok={v['agreement_ok']}")
     print("  (informational only -- does not gate this run)")
-
-    # ── Main computation: full-res PNG features for every usable slide ──
-    print("\n=== Computing FULL-RESOLUTION stain features for all usable slides ===")
-    slide_features, feature_failures = compute_fullres_slide_features(usable_slides, args.converted_png_dir)
 
     mouse_to_weeks: dict[str, set] = {}
     for r in all_slides:

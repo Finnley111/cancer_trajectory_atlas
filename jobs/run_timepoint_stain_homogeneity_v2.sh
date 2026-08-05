@@ -49,10 +49,18 @@
 # v1 ran the same rgb2hed/_deconvolve_hematoxylin computation on ~29 coarse
 # NDPI reads (cheap) plus 7 full-res PNGs (the validation subset) in its
 # 3-hour budget. This run computes full-res PNG features (compute_slide_
-# stain_features, downsample_factor=8) for ALL ~29 usable slides, plus the
-# same informational coarse-vs-PNG validation now over ~29 slides instead of
-# 7 -- roughly triple the full-res work of Stage B v1's validation step alone.
-# 6h is a generous scale-up from the 3h v1 budget, not a tight estimate.
+# stain_features, downsample_factor=8) for ALL ~29 usable slides -- roughly
+# 4x the full-res decode work of Stage B v1's 7-slide validation step. The
+# informational coarse-vs-PNG comparison (validate_coarse_vs_precomputed_
+# fullres) reuses those already-computed full-res features and only adds
+# ~29 cheap coarse NDPI reads on top -- it does NOT read each PNG a second
+# time (an earlier draft of this module did; fixed before first submission,
+# see the module docstring). So the real added cost vs the 3h v1 budget is
+# roughly "4x Stage B v1's full-res work, once", not "8x". 6h is still a
+# generous margin on top of that, not a tight estimate -- there is no
+# per-slide timing data from this cluster to derive a tighter number from.
+# If you want a real number before trusting future runs, check this job's
+# own `seff <jobid>` / `sacct -j <jobid> --format=Elapsed` after it finishes.
 #
 # NOTE on --mem=64G: unchanged from Stage B v1 -- rgb2hed still upcasts its
 # (downsampled) input to float64 internally per slide; peak memory is
