@@ -32,7 +32,7 @@
 #   bash ~/cancer_trajectory_atlas/jobs/submit_timepoint_stageDE.sh
 
 #SBATCH --account=def-lmarti46
-#SBATCH --time=24:00:00
+#SBATCH --time=60:00:00
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
@@ -43,10 +43,16 @@
 # no-crop PNGs. At ~110000 x 45000 an RGB array is ~15 GB, versus ~5.8 GB for the
 # left-cropped originals the 64G jobs were sized against.
 #
-# NOTE on --time=24:00:00: an HONEST GUESS, not a measurement. The 16 cropped
-# slides fit in 6h at ~3.3M grid positions total; these 29 full-width slides are
-# ~15.6M positions, and patch extraction (per-patch PIL/HSV on CPU) dominates,
-# not the GPU. IMPORTANT: this job is RESUMABLE -- each slide's features are
+# NOTE on --time=60:00:00 (2.5 days): still an HONEST GUESS, not a measurement --
+# deliberately widened from an initial 24h guess for extra safety margin, since
+# this is an unattended overnight (now multi-day) run and nothing about the real
+# per-slide cost is known yet. The 16 cropped slides fit in 6h at ~3.3M grid
+# positions total; these 29 full-width slides are ~15.6M positions, and patch
+# extraction (per-patch PIL/HSV on CPU) dominates, not the GPU. If this account's
+# QOS caps walltime below 60h, sbatch will reject the submission immediately --
+# lower --time and resubmit if so (the job is resumable either way, see below,
+# so a lower cap just means more resubmissions, not lost work). IMPORTANT: this
+# job is RESUMABLE -- each slide's features are
 # written to the cache and its projection to per_slide/ as soon as that slide
 # finishes, and a cache hit skips all decode + GPU work. If it hits the walltime,
 # just resubmit and it continues from the next unprocessed slide; nothing is
