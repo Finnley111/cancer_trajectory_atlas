@@ -826,12 +826,17 @@ def write_figures(section: str, task_a: dict, task_b: dict, output_dir: Path) ->
         fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
 
         ax = axes[0]
+        # morph_mean_signed_z is deliberately NOT plotted: it cancels across
+        # features that move in opposite directions and is flagged INVALID in the
+        # JSON. Plotting it would invite exactly the citation the flag forbids.
+        # Per-feature direction lives in per_feature_directionality instead.
         keys = ["diffmap_centroid_distance", "pca_centroid_distance_matched_dims",
-                "morph_mean_abs_z", "morph_mean_signed_z", "dc1", "mean_knn_distance"]
+                "morph_mean_abs_z", "dc1", "mean_knn_distance"]
         vals = [task_a["measures"][k]["rho"] for k in keys]
         cols = {"DEFINITIONAL": "#BBBBBB", "INFORMATIVE": "#4878CF",
                 "DECISIVE": "#D65F5F", "REFERENCE": "#9C9C9C"}
-        bar_cols = [cols[task_a["measures"][k]["status"]] for k in keys]
+        # .get so a new status label can never crash the whole figure again.
+        bar_cols = [cols.get(task_a["measures"][k]["status"], "#000000") for k in keys]
         ax.barh(range(len(keys)), vals, color=bar_cols)
         ax.set_yticks(range(len(keys)))
         ax.set_yticklabels([k.replace("_", "\n") for k in keys], fontsize=7)
@@ -1164,11 +1169,16 @@ def main() -> None:
     print("  Eccentricity check — is the pseudotime a trajectory?")
     print("=" * 64)
 
-    task_a, task_b = {}, {}
+    task_a, task_b, root_prov = {}, {}, {}
     for section, run_dir in zip(args.sections, args.run_dirs):
         print(f"\n  Loading {section} from {run_dir} ...")
         adata = load_section(Path(run_dir))
         print(f"    {adata.n_obs} patches.")
+
+        print(f"  [{section}] Task 0 — production root provenance ...")
+        rp = check_production_root_provenance(section, adata)
+        root_prov[section] = rp
+        print(f"    {rp['verdict']}")
 
         print(f"  [{section}] Task A — which geometry is the pseudotime? ...")
         ta = run_task_a(section, adata)
