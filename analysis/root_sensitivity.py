@@ -533,17 +533,42 @@ def run_root_null(adata, original_pt, obs, dc_values, n_roots, n_draws,
             continue
         lo, hi = float(v.min()), float(v.max())
         inside = bool(lo <= orig <= hi)
+        width = hi - lo
+        dist = 0.0 if inside else float(min(abs(orig - lo), abs(orig - hi)))
+        # A min/max over n_draws is a crude interval. Clearing it by a hair is not
+        # evidence; and a null so wide it would contain almost any value cannot
+        # support an "inside" conclusion either. Both cases are flagged, because
+        # reporting a bare inside/outside from them would over-claim.
+        rel_margin = (dist / width) if width > 0 else float("nan")
+        marginal = bool((not inside) and np.isfinite(rel_margin) and rel_margin < 0.10)
+        non_discriminative = bool(width >= 0.5)
+        if non_discriminative:
+            attribution = (
+                f"null range is {width:.2f} wide — too wide to discriminate. 'Inside' "
+                "here means the null family is highly variable, NOT that the root rule "
+                "is irrelevant. Do not read an attribution from this mode."
+            )
+        elif inside:
+            attribution = "inside null range — NOT attributable to the root rule"
+        elif marginal:
+            attribution = (
+                f"outside by {dist:.4f}, only {rel_margin:.1%} of the null's own "
+                f"{width:.3f} width — MARGINAL. A min/max over {v.size} draws cannot "
+                "support this call; treat as inconclusive, not as an effect."
+            )
+        else:
+            attribution = "outside null range — the root rule contributes to this value"
         feature_summary[f] = {
             "original_rho": orig,
             "null_min": lo, "null_median": float(np.median(v)), "null_max": hi,
+            "null_range_width": float(width),
             "null_per_draw": [float(x) for x in v],
             "original_inside_null_range": inside,
-            "distance_outside_null_range": 0.0 if inside else float(min(abs(orig - lo), abs(orig - hi))),
-            "attribution": (
-                "inside null range — NOT attributable to the root rule"
-                if inside else
-                "outside null range — the root rule contributes to this value"
-            ),
+            "distance_outside_null_range": dist,
+            "relative_margin_outside": rel_margin,
+            "marginal_call": marginal,
+            "null_non_discriminative": non_discriminative,
+            "attribution": attribution,
         }
 
     return {
@@ -562,6 +587,38 @@ def run_root_null(adata, original_pt, obs, dc_values, n_roots, n_draws,
             "the root-selection rule."
         ),
     }
+
+
+def _axis_verdict(r_dc: float, r_ecc_dc: float, r_ecc_cen: float) -> str:
+    ecc = max(abs(r_ecc_dc), abs(r_ecc_cen))
+    gap = ecc - abs(r_dc)
+    if abs(r_dc) >= 0.7 and gap <= 0.1:
+        verdict = ("MONOTONE IN DC1 — the pseudotime is essentially the first "
+                   "diffusion coordinate, i.e. a genuine 1-D manifold axis.")
+    elif ecc >= 0.6 and gap >= 0.15:
+        verdict = (
+            f"ECCENTRICITY-DOMINANT — the pseudotime tracks distance from the middle "
+            f"of the manifold (|rho| = {ecc:.3f}) considerably better than position "
+            f"along DC1 (|rho| = {abs(r_dc):.3f}); it shares {ecc ** 2:.0%} of rank "
+            f"variance with the eccentricity measure against {r_dc ** 2:.0%} with DC1. "
+            "A radial measure is DIRECTIONLESS: 'early' means typical morphology and "
+            "'late' means atypical in ANY direction, so two patches at opposite "
+            "morphological extremes both score late. Which end counts as early is set "
+            "by the root rule, not by the geometry, and feature-correlation SIGNS "
+            "inherit that choice. A directed-trajectory reading is not supported."
+        )
+    elif ecc >= 0.6 or abs(r_dc) >= 0.6:
+        verdict = (
+            f"MIXED — eccentricity |rho| = {ecc:.3f} vs DC1 |rho| = {abs(r_dc):.3f}; "
+            "neither description dominates by a clear margin. Report both."
+        )
+    else:
+        verdict = (
+            f"NEITHER — eccentricity |rho| = {ecc:.3f}, DC1 |rho| = {abs(r_dc):.3f}; "
+            "the pseudotime is not well described by either. Interpret with care."
+        )
+
+    return verdict
 
 
 def axis_identity_diagnostic(adata, dc_values, original_pt) -> dict:
@@ -588,18 +645,7 @@ def axis_identity_diagnostic(adata, dc_values, original_pt) -> dict:
     r_ecc_dc = _safe_rho(original_pt, dc_ecc)
     r_ecc_cen = _safe_rho(original_pt, centroid_dist)
 
-    if abs(r_dc) >= 0.7:
-        verdict = ("MONOTONE IN DC1 — the pseudotime is essentially the first "
-                   "diffusion coordinate, i.e. a genuine 1-D manifold axis.")
-    elif max(abs(r_ecc_dc), abs(r_ecc_cen)) >= 0.7 and abs(r_dc) < 0.4:
-        verdict = ("ECCENTRICITY — the pseudotime tracks distance from the middle "
-                   "of the manifold rather than position along an axis. It is "
-                   "directionless by construction, so which end counts as 'early' "
-                   "is set entirely by the root rule, NOT by the geometry. Feature "
-                   "correlation SIGNS inherit that choice.")
-    else:
-        verdict = ("NEITHER cleanly — the pseudotime is not well described by DC1 "
-                   "nor by a simple eccentricity measure; interpret with care.")
+    verdict = _axis_verdict(r_dc, r_ecc_dc, r_ecc_cen)
 
     return {
         "rho_pt_vs_dc1": r_dc,
@@ -1521,6 +1567,101 @@ def write_report(output_dir: Path, check_a: dict, check_c: dict, verdicts: dict)
     (output_dir / "root_sensitivity_report.md").write_text("\n".join(L), encoding="utf-8")
 
 
+
+def _recompute_feature_attribution(fs: dict) -> dict:
+    """Re-derive a feature's null attribution from its stored per-draw values.
+
+    Lets a saved root_sensitivity.json be re-scored under corrected attribution
+    logic without re-running a single DPT. Only fields derived from
+    null_per_draw + original_rho are touched.
+    """
+    draws = [float(x) for x in fs.get("null_per_draw", []) if np.isfinite(float(x))]
+    orig = fs.get("original_rho")
+    if not draws or orig is None:
+        return fs
+    v = np.array(draws, dtype=float)
+    orig = float(orig)
+    lo, hi = float(v.min()), float(v.max())
+    inside = bool(lo <= orig <= hi)
+    width = hi - lo
+    dist = 0.0 if inside else float(min(abs(orig - lo), abs(orig - hi)))
+    rel = (dist / width) if width > 0 else float("nan")
+    marginal = bool((not inside) and np.isfinite(rel) and rel < 0.10)
+    non_disc = bool(width >= 0.5)
+    if non_disc:
+        attribution = (
+            f"null range is {width:.2f} wide — too wide to discriminate. 'Inside' "
+            "here means the null family is highly variable, NOT that the root rule "
+            "is irrelevant. Do not read an attribution from this mode."
+        )
+    elif inside:
+        attribution = "inside null range — NOT attributable to the root rule"
+    elif marginal:
+        attribution = (
+            f"outside by {dist:.4f}, only {rel:.1%} of the null's own {width:.3f} "
+            f"width — MARGINAL. A min/max over {v.size} draws cannot support this "
+            "call; treat as inconclusive, not as an effect."
+        )
+    else:
+        attribution = "outside null range — the root rule contributes to this value"
+    fs.update({
+        "null_min": lo, "null_median": float(np.median(v)), "null_max": hi,
+        "null_range_width": float(width),
+        "original_inside_null_range": inside,
+        "distance_outside_null_range": dist,
+        "relative_margin_outside": rel,
+        "marginal_call": marginal,
+        "null_non_discriminative": non_disc,
+        "attribution": attribution,
+    })
+    return fs
+
+
+def regenerate_from_json(json_path: Path, output_dir: Path) -> dict:
+    """Re-score and re-render a completed run WITHOUT recomputing anything.
+
+    Reads a saved root_sensitivity.json, re-derives every quantity that is a
+    function of already-stored numbers (null attributions, the axis-identity
+    verdict, all four verdicts), and rewrites the markdown + JSON. Costs seconds,
+    not hours — the right response to a bug in reporting logic rather than in the
+    computation. Figures are NOT regenerated (they need the pseudotime arrays).
+    """
+    with open(json_path) as f:
+        payload = json.load(f)
+
+    check_a = payload.get("check_a_geometry_seeded_roots", {})
+    check_c = payload.get("check_c_alternative_covariate", {})
+
+    for section, res in check_a.items():
+        for mode, nul in (res.get("root_nulls") or {}).items():
+            for feat, fs in (nul.get("feature_rho_null") or {}).items():
+                nul["feature_rho_null"][feat] = _recompute_feature_attribution(fs)
+        if res.get("random_root_null") and (res.get("root_nulls") or {}).get("uniform"):
+            res["random_root_null"] = res["root_nulls"]["uniform"]
+        ai = res.get("axis_identity")
+        if ai:
+            ai["verdict"] = _axis_verdict(
+                float(ai["rho_pt_vs_dc1"]),
+                float(ai["rho_pt_vs_abs_dc1_from_median"]),
+                float(ai["rho_pt_vs_diffmap_centroid_distance"]),
+            )
+
+    verdicts = build_verdicts(check_a, check_c)
+    payload["verdicts"] = verdicts
+    payload["regenerated_from"] = str(json_path)
+    payload["regeneration_note"] = (
+        "Verdicts and null attributions re-derived from the stored per-draw values "
+        "under corrected reporting logic. No DPT, correlation or permutation was "
+        "recomputed; every underlying number is unchanged from the original run."
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(output_dir / "root_sensitivity.json", "w") as f:
+        json.dump(payload, f, indent=2, default=_json_default)
+    write_report(output_dir, check_a, check_c, verdicts)
+    return payload
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1528,9 +1669,13 @@ def main() -> None:
         description="Root-selection sensitivity: geometry-seeded DPT (Check A) and "
                     "alternative confound covariate (Check C)."
     )
-    parser.add_argument("--sections", nargs="+", required=True,
+    parser.add_argument("--from-json", type=Path, default=None,
+                        help="Re-score and re-render a completed run from its saved "
+                             "root_sensitivity.json without recomputing anything. "
+                             "Use when reporting logic changed but the numbers did not.")
+    parser.add_argument("--sections", nargs="+", default=None,
                         help="Section labels, e.g. 2M-1 2M-2")
-    parser.add_argument("--run-dirs", nargs="+", type=Path, required=True,
+    parser.add_argument("--run-dirs", nargs="+", type=Path, default=None,
                         help="Existing per-section run dirs, in the same order as --sections. "
                              "READ-ONLY — never written to.")
     parser.add_argument("--output-dir", type=Path, required=True,
@@ -1559,6 +1704,20 @@ def main() -> None:
     parser.add_argument("--skip-check-c", action="store_true")
     args = parser.parse_args()
 
+    if args.from_json is not None:
+        print("=" * 64)
+        print("  Root-selection sensitivity — REPORT-ONLY regeneration")
+        print("=" * 64)
+        print(f"  Source : {args.from_json}")
+        print(f"  Output : {args.output_dir}")
+        payload = regenerate_from_json(args.from_json, args.output_dir)
+        print("\n  Nothing was recomputed; only derived text was re-scored.\n")
+        for k, v in payload["verdicts"].items():
+            print(f"  [{k}]\n  {v}\n")
+        return
+
+    if not args.sections or not args.run_dirs:
+        parser.error("--sections and --run-dirs are required unless --from-json is given")
     if len(args.sections) != len(args.run_dirs):
         parser.error(
             f"--sections ({len(args.sections)}) and --run-dirs ({len(args.run_dirs)}) "
