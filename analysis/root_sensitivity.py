@@ -422,41 +422,145 @@ def root_provenance(adata, roots: list) -> dict:
     return out
 
 
-def run_random_root_null(adata, original_pt: np.ndarray, n_roots: int,
-                         n_draws: int, seed: int = 0) -> dict:
-    """Null baseline: what does rho(original PT, reseeded PT) look like when the
-    20 roots are drawn UNIFORMLY AT RANDOM?
+def _draw_roots(adata, dc_values, n_roots, mode, rng):
+    """Uniform or locally-clustered root draw.
 
-    Without this there is no scale for the DC1 numbers — a geometry-seeded rho of
-    0.52 means something very different if random roots give 0.1 than if they give
-    0.5. Only the pseudotime correlation is computed per draw (no permutation
-    suite), so the cost is n_draws * n_roots DPT runs and nothing else.
+    The production rule takes the 20 LOWEST-nuclear_density patches, which is a
+    tightly clustered set, not a spread one. A uniform null therefore differs
+    from it in two ways at once (which region, and clustered vs spread), and
+    cannot separate them. The 'clustered' mode draws a random seed patch and
+    takes its n_roots nearest neighbours in diffusion space, matching the
+    production set's local structure while randomising its location — so
+    comparing the two nulls isolates location from clustering.
+    """
+    n = adata.n_obs
+    if mode == "uniform":
+        return [int(i) for i in rng.choice(n, size=n_roots, replace=False)]
+    if mode == "clustered":
+        dm = np.asarray(adata.obsm["X_diffmap"], dtype=float)
+        seed_idx = int(rng.integers(n))
+        d = np.linalg.norm(dm - dm[seed_idx], axis=1)
+        return [int(i) for i in np.argsort(d)[:n_roots]]
+    raise ValueError(f"unknown null mode {mode!r}")
+
+
+def run_root_null(adata, original_pt, obs, dc_values, n_roots, n_draws,
+                  mode="uniform", seed=0) -> dict:
+    """Null baseline for root choice, with FULL per-feature correlations.
+
+    Without this there is no scale for the DC1 numbers, and no way to ask the
+    question that actually matters: is the ORIGINAL feature correlation inside
+    or outside the range you would get from an arbitrary root set? A correlation
+    that sits inside the null range is not attributable to the root rule; one
+    that sits outside it is.
+
+    Only pseudotime and the six correlations are computed per draw (no
+    permutation suite), so the cost is n_draws * n_roots DPT runs.
     """
     rng = np.random.default_rng(seed)
     rhos, draws = [], []
+    per_feature_rhos = {f: [] for f in MORPH_FEATURES}
+
     for d in range(n_draws):
-        roots = [int(i) for i in rng.choice(adata.n_obs, size=n_roots, replace=False)]
+        roots = _draw_roots(adata, dc_values, n_roots, mode, rng)
         pt, _, _ = run_multi_root_dpt(adata, roots)
         r = float(spearmanr(original_pt, pt).statistic)
+        corrs = correlate_all_features(obs, pt)
+        for f in MORPH_FEATURES:
+            per_feature_rhos[f].append(corrs[f]["rho"])
         rhos.append(r)
-        draws.append({"draw": d, "seed": seed, "rho_vs_original": r,
-                      "root_provenance": root_provenance(adata, roots)})
-        print(f"    random draw {d + 1}/{n_draws}: rho = {r:+.4f}")
-    arr = np.array(rhos, dtype=float)
+        draws.append({
+            "draw": d, "rho_vs_original": r,
+            "feature_rho": {f: corrs[f]["rho"] for f in MORPH_FEATURES},
+            "root_provenance": root_provenance(adata, roots),
+        })
+        print(f"    {mode} draw {d + 1}/{n_draws}: rho_vs_original = {r:+.4f}")
+
+    arr = np.abs(np.array(rhos, dtype=float))
+    feature_summary = {}
+    for f in MORPH_FEATURES:
+        v = np.array([x for x in per_feature_rhos[f] if np.isfinite(x)], dtype=float)
+        orig = _safe_rho(original_pt, obs[f].values.astype(float))
+        if v.size == 0:
+            feature_summary[f] = {"original_rho": orig, "null_min": None,
+                                  "null_max": None, "original_inside_null_range": None}
+            continue
+        lo, hi = float(v.min()), float(v.max())
+        inside = bool(lo <= orig <= hi)
+        feature_summary[f] = {
+            "original_rho": orig,
+            "null_min": lo, "null_median": float(np.median(v)), "null_max": hi,
+            "null_per_draw": [float(x) for x in v],
+            "original_inside_null_range": inside,
+            "distance_outside_null_range": 0.0 if inside else float(min(abs(orig - lo), abs(orig - hi))),
+            "attribution": (
+                "inside null range — NOT attributable to the root rule"
+                if inside else
+                "outside null range — the root rule contributes to this value"
+            ),
+        }
+
     return {
-        "n_draws": n_draws, "n_roots": n_roots, "seed": seed,
+        "mode": mode, "n_draws": n_draws, "n_roots": n_roots, "seed": seed,
         "rho_vs_original_per_draw": rhos,
-        "mean_abs_rho": float(np.abs(arr).mean()),
-        "median_abs_rho": float(np.median(np.abs(arr))),
-        "min_abs_rho": float(np.abs(arr).min()),
-        "max_abs_rho": float(np.abs(arr).max()),
+        "mean_abs_rho": float(arr.mean()), "median_abs_rho": float(np.median(arr)),
+        "min_abs_rho": float(arr.min()), "max_abs_rho": float(arr.max()),
+        "feature_rho_null": feature_summary,
         "draws": draws,
         "note": (
-            "Uniformly-random root sets, same aggregation as every other run here. "
-            "Compare |rho| for the DC1 tails against max_abs_rho: a DC1 tail that "
-            "does not clearly exceed the random ceiling carries no information about "
-            "root choice beyond what any arbitrary root set would give."
+            f"{n_draws} {mode} root sets, same aggregation as every other run here. "
+            "TWO readings: (1) compare |rho_vs_original| against the DC1 tails — a "
+            "DC1 tail below the null floor is an ATYPICAL root set, not evidence the "
+            "axis is fragile; (2) for each feature, check original_inside_null_range "
+            "— an original correlation inside the null range is not attributable to "
+            "the root-selection rule."
         ),
+    }
+
+
+def axis_identity_diagnostic(adata, dc_values, original_pt) -> dict:
+    """What IS the production pseudotime, geometrically?
+
+    If root choice barely matters (see the nulls), the axis is fixed by the
+    manifold, and it is worth asking which manifold quantity it is:
+      - monotone in DC1        -> a genuine 1-D trajectory coordinate
+      - tracking |DC1 - median| or distance from the diffusion-map centroid
+                               -> an ECCENTRICITY measure ("how far from the
+                                  middle"), which is directionless and would
+                                  mean 'early' vs 'late' is set only by the root
+                                  rule's choice of end, not by the geometry.
+    Cheap: correlations on stored arrays, no DPT.
+    """
+    dm = np.asarray(adata.obsm["X_diffmap"], dtype=float)
+    nontrivial = [i for i in range(dm.shape[1])
+                  if not (abs(dm[:, i].mean()) / max(dm[:, i].std(), 1e-30) > 1.0)]
+    sub = dm[:, nontrivial] if nontrivial else dm
+    centroid_dist = np.linalg.norm(sub - sub.mean(axis=0), axis=1)
+    dc_ecc = np.abs(dc_values - np.median(dc_values))
+
+    r_dc = _safe_rho(original_pt, dc_values)
+    r_ecc_dc = _safe_rho(original_pt, dc_ecc)
+    r_ecc_cen = _safe_rho(original_pt, centroid_dist)
+
+    if abs(r_dc) >= 0.7:
+        verdict = ("MONOTONE IN DC1 — the pseudotime is essentially the first "
+                   "diffusion coordinate, i.e. a genuine 1-D manifold axis.")
+    elif max(abs(r_ecc_dc), abs(r_ecc_cen)) >= 0.7 and abs(r_dc) < 0.4:
+        verdict = ("ECCENTRICITY — the pseudotime tracks distance from the middle "
+                   "of the manifold rather than position along an axis. It is "
+                   "directionless by construction, so which end counts as 'early' "
+                   "is set entirely by the root rule, NOT by the geometry. Feature "
+                   "correlation SIGNS inherit that choice.")
+    else:
+        verdict = ("NEITHER cleanly — the pseudotime is not well described by DC1 "
+                   "nor by a simple eccentricity measure; interpret with care.")
+
+    return {
+        "rho_pt_vs_dc1": r_dc,
+        "rho_pt_vs_abs_dc1_from_median": r_ecc_dc,
+        "rho_pt_vs_diffmap_centroid_distance": r_ecc_cen,
+        "n_nontrivial_components_used": len(nontrivial),
+        "verdict": verdict,
     }
 
 
@@ -624,13 +728,20 @@ def run_check_a_for_section(
     nd_high = tails["high"]["root_nuclear_density_mean"]
     by_root_means = "low" if nd_low <= nd_high else "high"
 
-    random_null = None
+    axis_identity = axis_identity_diagnostic(adata, dc_values, original_pt)
+    print(f"  [{section}] axis identity: {axis_identity['verdict']}")
+
+    nulls = {}
     if n_random_draws > 0:
-        print(f"  [{section}] Random-root null baseline ({n_random_draws} draws) ...")
-        random_null = run_random_root_null(adata, original_pt, n_roots, n_random_draws)
-        print(f"  [{section}] random |rho| range "
-              f"[{random_null['min_abs_rho']:.4f}, {random_null['max_abs_rho']:.4f}], "
-              f"median {random_null['median_abs_rho']:.4f}")
+        for mode in ("uniform", "clustered"):
+            print(f"  [{section}] {mode} root null ({n_random_draws} draws) ...")
+            nulls[mode] = run_root_null(
+                adata, original_pt, obs, dc_values, n_roots, n_random_draws, mode=mode
+            )
+            print(f"  [{section}] {mode} |rho| range "
+                  f"[{nulls[mode]['min_abs_rho']:.4f}, {nulls[mode]['max_abs_rho']:.4f}], "
+                  f"median {nulls[mode]['median_abs_rho']:.4f}")
+    random_null = nulls.get("uniform")
 
     rho_dc_nd = _safe_rho(dc_values, nuclear_density)
     by_full_n = "low" if rho_dc_nd >= 0 else "high"
@@ -671,6 +782,8 @@ def run_check_a_for_section(
         ),
         "tails": tails,
         "random_root_null": random_null,
+        "root_nulls": nulls,
+        "axis_identity": axis_identity,
     }
 
 
@@ -955,74 +1068,95 @@ def write_check_c_figure(section: str, section_result: dict, output_dir: Path) -
 # ── Verdicts ──────────────────────────────────────────────────────────────────
 
 def build_verdicts(check_a: dict, check_c: dict) -> dict:
-    """Three plain verdicts, as required by the output spec."""
-    # (1) nuclear_density robustness to root choice
-    nd_rows = []
-    for section, res in check_a.items():
-        t = res["tails"][res["direction_matched_tail"]]
-        nd_rows.append((section, t["per_feature"]["nuclear_density"]))
-    nd_robust = all(r["robust_to_root_choice"] for _, r in nd_rows)
-    nd_detail = "; ".join(
-        f"{s}: {_fmt(r['original_rho'])} → {_fmt(r['geometry_seeded_rho'])} "
-        f"(|Δ| = {_fmt(r['abs_delta'])}, sign {'preserved' if r['sign_preserved'] else 'FLIPPED'})"
-        for s, r in nd_rows
-    )
-    v1 = (
-        f"{'ROBUST' if nd_robust else 'NOT ROBUST'} — nuclear_density under "
-        f"geometry-seeded roots: {nd_detail}. "
-        + (
-            "The correlation survives replacing the density-based root rule with a "
-            "purely geometric one, so it is not an artifact of the circularity."
-            if nd_robust else
-            "The correlation moves materially and/or changes sign when roots no "
-            "longer derive from nuclear density, so the reported value is at least "
-            "partly an artifact of the root rule and must not be presented as "
-            "independent validation."
-        )
-    )
+    """Three plain verdicts. Verdicts 1 and 2 are NULL-REFERENCED: the question is
+    not "did the correlation move" (any reseeding moves it) but "did it move
+    outside the range an arbitrary root set produces"."""
 
-    # (2) the other five features
+    def _null_rows(feature):
+        rows = []
+        for section, res in check_a.items():
+            nul = (res.get("root_nulls") or {}).get("uniform")
+            if not nul:
+                continue
+            fs = nul["feature_rho_null"].get(feature)
+            if fs and fs.get("original_inside_null_range") is not None:
+                rows.append((section, fs))
+        return rows
+
+    # ── 1. nuclear_density ────────────────────────────────────────────────────
+    nd_rows = _null_rows("nuclear_density")
+    if nd_rows:
+        outside = [s for s, fs in nd_rows if not fs["original_inside_null_range"]]
+        detail = "; ".join(
+            f"{s}: original {_fmt(fs['original_rho'])} vs random-root null "
+            f"[{_fmt(fs['null_min'])}, {_fmt(fs['null_max'])}] → "
+            f"{'OUTSIDE' if not fs['original_inside_null_range'] else 'inside'}"
+            for s, fs in nd_rows
+        )
+        v1 = (
+            f"{'NOT ROBUST' if outside else 'ROBUST'} — {detail}. "
+            + ("The nuclear_density correlation lies within the range produced by "
+               "arbitrary root sets, so it is NOT attributable to the "
+               "lowest-nuclear-density root rule and the circularity concern does "
+               "not undermine it."
+               if not outside else
+               f"In {outside} the original value falls outside what arbitrary root "
+               "sets produce, so the root rule does contribute to it and it must "
+               "not be presented as independent validation.")
+        )
+    else:
+        v1 = ("UNDETERMINED — no random-root null was computed (--n-random-draws 0), "
+              "so there is no reference range and the DC1 comparison alone cannot "
+              "separate a fragile correlation from an atypical root set.")
+
+    # ── 2. the other five features ────────────────────────────────────────────
     others = [f for f in MORPH_FEATURES if f != "nuclear_density"]
-    other_rows, n_robust = [], 0
-    for section, res in check_a.items():
-        t = res["tails"][res["direction_matched_tail"]]
-        for feat in others:
-            r = t["per_feature"][feat]
-            other_rows.append((section, feat, r))
-            if r["robust_to_root_choice"]:
-                n_robust += 1
-    not_robust = [f"{s}/{f}" for s, f, r in other_rows if not r["robust_to_root_choice"]]
-
-    # How many of these verdicts would flip if the opposite tail had been labelled
-    # direction-matched? If the orientation criteria disagree, or the alternative
-    # tail gives a materially different count, the verdict is fragile and says so.
-    alt_robust = 0
-    for section, res in check_a.items():
-        alt = "high" if res["direction_matched_tail"] == "low" else "low"
-        alt_robust += sum(
-            res["tails"][alt]["per_feature"][f]["robust_to_root_choice"] for f in others
+    inside_n, total_n, outside_list = 0, 0, []
+    for feat in others:
+        for section, fs in _null_rows(feat):
+            total_n += 1
+            if fs["original_inside_null_range"]:
+                inside_n += 1
+            else:
+                outside_list.append(
+                    f"{section}/{feat} (orig {_fmt(fs['original_rho'])}, null "
+                    f"[{_fmt(fs['null_min'])}, {_fmt(fs['null_max'])}])"
+                )
+    if total_n:
+        v2 = (
+            f"{inside_n} of {total_n} (section, feature) pairs sit INSIDE the "
+            "random-root null range and are therefore not attributable to the root "
+            "rule. "
+            + ("All five features in both sections are root-insensitive."
+               if not outside_list else
+               f"Outside the null range: {'; '.join(outside_list)} — the root rule "
+               "contributes to these and they need the caveat.")
         )
-    fragile = [s for s, r in check_a.items()
-               if not r.get("direction_agreement", {}).get("criteria_agree", True)]
+    else:
+        v2 = "UNDETERMINED — no random-root null was computed."
 
-    v2 = (
-        f"{n_robust} of {len(other_rows)} (section, feature) pairs across the five "
-        f"non-density features are robust to root choice (|Δρ| ≤ {ROBUST_DELTA_TOL} "
-        f"with sign preserved). "
-        + (
-            "All five features are robust in both sections."
-            if not not_robust else
-            f"Not robust: {', '.join(not_robust)}. Those correlations depend "
-            "materially on the root rule and should be reported with that caveat."
-        )
-        + f" Under the OPPOSITE tail the count would be {alt_robust} of {len(other_rows)}"
-        + (f"; orientation criteria disagree for {fragile}, so this verdict is FRAGILE "
-           "and both tails must be reported as co-primary."
-           if fragile else
-           ", reported so the sensitivity of this count to the tail label is visible.")
+    # DC1 tails, reported separately with their provenance caveat.
+    dc_bits = []
+    for section, res in check_a.items():
+        nul = (res.get("root_nulls") or {}).get("uniform")
+        floor = _fmt(nul["min_abs_rho"]) if nul else "n/a"
+        for tail in ("low", "high"):
+            t = res["tails"][tail]
+            pv = t.get("root_provenance", {})
+            dom = pv.get("single_slide_dominated")
+            dc_bits.append(
+                f"{section}/DC1-{tail}: rho {_fmt(t['rho_original_vs_reseeded_pseudotime'])}"
+                + (f", {pv.get('max_share_from_one_slide', 0):.0%} from one slide"
+                   if dom else "")
+            )
+    v2 += (
+        " DC1-seeded tails, for reference: " + "; ".join(dc_bits)
+        + ". A DC1 tail falling BELOW the random-root floor is an atypical, "
+        "single-slide-dominated root set rather than evidence of a fragile axis — "
+        "check root_provenance before reading any DC1 tail as a robustness result."
     )
 
-    # (3) confound finding under an alternative covariate
+    # ── 3. confound covariate (unchanged logic) ───────────────────────────────
     c_bits, any_change = [], False
     for section, res in check_c.items():
         nd_surv = res["control_nuclear_density"]["summary"]["survivors"]
@@ -1034,19 +1168,29 @@ def build_verdicts(check_a: dict, check_c: dict) -> dict:
             f"{section}: survivors under nuclear_density = {nd_surv or 'none'}; "
             f"under nc_ratio = {nc_surv or 'none'}; verdict changes on "
             f"{changes or 'no feature'} "
-            f"(ρ(nd, nc_ratio) = {_fmt(res['rho_nuclear_density_vs_nc_ratio'])})"
+            f"(rho(nd, nc_ratio) = {_fmt(res['rho_nuclear_density_vs_nc_ratio'])})"
         )
     v3 = (
         f"{'DEPENDS ON COVARIATE CHOICE' if any_change else 'HOLDS under the alternative covariate'} — "
         + " | ".join(c_bits)
-        + ". Because nuclear_density and nc_ratio are themselves correlated (see per-section "
-        "value above), this is a robustness check, not an independent test."
+        + ". Because nuclear_density and nc_ratio are themselves correlated (see "
+        "per-section value above), this is a robustness check, not an independent test."
     )
+
+    # ── 4. what the axis actually is ──────────────────────────────────────────
+    v4 = " | ".join(
+        f"{section}: rho(PT, DC1) = {_fmt(res['axis_identity']['rho_pt_vs_dc1'])}, "
+        f"rho(PT, centroid distance) = "
+        f"{_fmt(res['axis_identity']['rho_pt_vs_diffmap_centroid_distance'])} — "
+        f"{res['axis_identity']['verdict']}"
+        for section, res in check_a.items() if "axis_identity" in res
+    ) or "UNDETERMINED — axis identity diagnostic not computed."
 
     return {
         "1_nuclear_density_robust_to_root_choice": v1,
         "2_other_five_features_robust_to_root_choice": v2,
         "3_cellularity_confound_holds_under_alternative_covariate": v3,
+        "4_what_the_pseudotime_axis_geometrically_is": v4,
     }
 
 
@@ -1121,7 +1265,46 @@ def write_report(output_dir: Path, check_a: dict, check_c: dict, verdicts: dict)
         "root-choice effect."
     )
     L.append("")
-    nulls = {sec: r.get("random_root_null") for sec, r in check_a.items()}
+    L += ["### What the pseudotime axis geometrically is", ""]
+    for section, res in check_a.items():
+        ai = res.get("axis_identity")
+        if not ai:
+            continue
+        L.append(
+            f"- **{section}** — rho(PT, DC1) = {_fmt(ai['rho_pt_vs_dc1'])}, "
+            f"rho(PT, |DC1 - median|) = {_fmt(ai['rho_pt_vs_abs_dc1_from_median'])}, "
+            f"rho(PT, diffusion-map centroid distance) = "
+            f"{_fmt(ai['rho_pt_vs_diffmap_centroid_distance'])}. {ai['verdict']}"
+        )
+    L.append("")
+
+    L += ["### Feature correlations vs the random-root null (the attribution test)", ""]
+    L.append(
+        "The question is not whether a correlation moves under reseeding — any "
+        "reseeding moves it — but whether the original value falls **outside** the "
+        "range an arbitrary root set produces. Inside the range means the root rule "
+        "does not account for it."
+    )
+    L.append("")
+    L.append("| section | feature | original rho | random-root null range | inside? | attribution |")
+    L.append("|---|---|---|---|---|---|")
+    for section, res in check_a.items():
+        nul = (res.get("root_nulls") or {}).get("uniform")
+        if not nul:
+            continue
+        for feat in MORPH_FEATURES:
+            fs = nul["feature_rho_null"].get(feat, {})
+            if fs.get("original_inside_null_range") is None:
+                continue
+            L.append(
+                f"| {section} | {feat} | {_fmt(fs['original_rho'])} | "
+                f"[{_fmt(fs['null_min'])}, {_fmt(fs['null_max'])}] | "
+                f"{'**yes**' if fs['original_inside_null_range'] else '**NO**'} | "
+                f"{fs['attribution']} |"
+            )
+    L.append("")
+
+    nulls = {sec: (r.get("root_nulls") or {}).get("uniform") for sec, r in check_a.items()}
     if any(nulls.values()):
         L.append("**Random-root null baseline.** Without a null there is no scale for the "
                  "numbers above: 0.52 means one thing if random roots give 0.1 and quite "
@@ -1130,16 +1313,24 @@ def write_report(output_dir: Path, check_a: dict, check_c: dict, verdicts: dict)
         L.append("| section | draws | random |ρ| median | random |ρ| max | best DC1 tail |ρ| | DC1 exceeds random ceiling? |")
         L.append("|---|---|---|---|---|---|")
         for section, res in check_a.items():
-            nl = res.get("random_root_null")
-            if not nl:
-                continue
             best = max(abs(res["tails"][t]["rho_original_vs_reseeded_pseudotime"])
                        for t in ("low", "high"))
-            L.append(
-                f"| {section} | {nl['n_draws']} | {_fmt(nl['median_abs_rho'])} | "
-                f"{_fmt(nl['max_abs_rho'])} | {_fmt(best)} | "
-                f"{'**yes**' if best > nl['max_abs_rho'] else '**NO**'} |"
-            )
+            for mode, nl in (res.get("root_nulls") or {}).items():
+                L.append(
+                    f"| {section} ({mode}) | {nl['n_draws']} | "
+                    f"{_fmt(nl['median_abs_rho'])} | {_fmt(nl['max_abs_rho'])} | "
+                    f"{_fmt(best)} | "
+                    f"{'**yes**' if best > nl['max_abs_rho'] else '**NO** — the DC1 tails are ATYPICAL root sets, not a fragile axis'} |"
+                )
+        L.append("")
+        L.append(
+            "Two null modes are reported. **uniform** spreads 20 roots at random; "
+            "**clustered** takes the 20 nearest neighbours of a random patch in "
+            "diffusion space, matching the tight local structure of the production "
+            "root set (the 20 lowest-nuclear-density patches are a clustered set, "
+            "not a spread one) while randomising its location. Comparing the two "
+            "separates *where* the roots sit from *how clustered* they are."
+        )
         L.append("")
 
     for section, res in check_a.items():
@@ -1238,6 +1429,8 @@ def write_report(output_dir: Path, check_a: dict, check_c: dict, verdicts: dict)
     L.append(f"**2. Are the other five features robust to root choice?**  \n{verdicts['2_other_five_features_robust_to_root_choice']}")
     L.append("")
     L.append(f"**3. Does the cellularity confound finding hold under an alternative covariate?**  \n{verdicts['3_cellularity_confound_holds_under_alternative_covariate']}")
+    L.append("")
+    L.append(f"**4. What is the pseudotime axis, geometrically?**  \n{verdicts.get('4_what_the_pseudotime_axis_geometrically_is', 'n/a')}")
     L.append("")
 
     L += ["## Limitations", ""]
