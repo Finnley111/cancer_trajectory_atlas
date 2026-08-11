@@ -71,7 +71,7 @@
 #   sbatch ~/cancer_trajectory_atlas/jobs/run_root_sensitivity.sh
 
 #SBATCH --account=def-lmarti46
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --job-name=root_sensitivity
@@ -91,7 +91,7 @@ RUN_DIRS=(
 OUTPUT_DIR="$SCRATCH/results/root_sensitivity"
 N_ROOTS=20
 N_PERMUTATIONS=1000
-N_RANDOM_DRAWS=10
+N_RANDOM_DRAWS=25
 
 echo "============================================================"
 echo "  Root-selection sensitivity — Checks A and C"

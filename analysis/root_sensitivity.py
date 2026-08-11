@@ -335,7 +335,52 @@ def build_dpt_adata(adata):
     return small
 
 
-def run_multi_root_dpt(adata, root_indices: list) -> tuple:
+def verify_fast_dpt_equivalence(adata, root_idx: int) -> dict:
+    """Prove that mutating one AnnData in place gives byte-identical DPT to the
+    production path's per-root `adata.copy()`.
+
+    compute_dpt_multi_root copies the object for every root. That copy is for
+    safety, not for the numbers: sc.tl.dpt reads uns['iroot'] and writes
+    obs['dpt_pseudotime']. Reusing one object is therefore expected to be
+    identical and is many times cheaper, which is what makes a null of useful
+    size affordable. Expected is not verified, so this checks it on real data
+    before the fast path is used, and raises rather than silently proceeding.
+    """
+    import scanpy as sc
+
+    a = build_dpt_adata(adata)
+    a.uns["iroot"] = int(root_idx)
+    sc.tl.dpt(a)
+    via_copy = a.obs["dpt_pseudotime"].values.copy()
+
+    b = build_dpt_adata(adata)
+    b.uns["iroot"] = int(root_idx)
+    sc.tl.dpt(b)
+    _ = b.obs["dpt_pseudotime"].values.copy()      # first use of the reused object
+    b.uns["iroot"] = int(root_idx)
+    sc.tl.dpt(b)                                    # second use, same object
+    via_reuse = b.obs["dpt_pseudotime"].values.copy()
+
+    finite = np.isfinite(via_copy) & np.isfinite(via_reuse)
+    max_abs_diff = float(np.abs(via_copy[finite] - via_reuse[finite]).max()) if finite.any() else 0.0
+    identical = bool(max_abs_diff == 0.0
+                     and np.array_equal(np.isfinite(via_copy), np.isfinite(via_reuse)))
+    if not identical:
+        raise RuntimeError(
+            f"Fast DPT path is NOT equivalent to the per-root-copy path "
+            f"(max abs diff {max_abs_diff:.3e}). Refusing to use it — the null "
+            "draws would not be comparable to the primary results. Re-run with "
+            "--no-fast-null to force the copy path."
+        )
+    return {"root_index": int(root_idx), "max_abs_diff": max_abs_diff,
+            "identical": identical,
+            "note": ("Verified on real data: reusing one AnnData across roots gives "
+                     "identical DPT to the production per-root copy. The fast path "
+                     "is used ONLY for null draws; the DC1 tails and every primary "
+                     "result still use the copy path.")}
+
+
+def run_multi_root_dpt(adata, root_indices: list, base=None, reuse: bool = False) -> tuple:
     """Re-implementation of compute_dpt_multi_root's AGGREGATION, with the root
     set supplied rather than derived from nuclear density.
 
@@ -349,14 +394,15 @@ def run_multi_root_dpt(adata, root_indices: list) -> tuple:
     """
     import scanpy as sc
 
-    base = build_dpt_adata(adata)
+    if base is None:
+        base = build_dpt_adata(adata)
     n_patches = base.n_obs
     n_roots = len(root_indices)
     pt_matrix = np.zeros((n_roots, n_patches), dtype=np.float64)
     n_nonfinite_total = 0
 
     for r_i, root_idx in enumerate(root_indices):
-        tmp = base.copy()
+        tmp = base if reuse else base.copy()
         tmp.uns["iroot"] = int(root_idx)
         sc.tl.dpt(tmp)
         pt = tmp.obs["dpt_pseudotime"].values.copy()
@@ -445,7 +491,7 @@ def _draw_roots(adata, dc_values, n_roots, mode, rng):
 
 
 def run_root_null(adata, original_pt, obs, dc_values, n_roots, n_draws,
-                  mode="uniform", seed=0) -> dict:
+                  mode="uniform", seed=0, base=None, reuse=False) -> dict:
     """Null baseline for root choice, with FULL per-feature correlations.
 
     Without this there is no scale for the DC1 numbers, and no way to ask the
@@ -463,7 +509,7 @@ def run_root_null(adata, original_pt, obs, dc_values, n_roots, n_draws,
 
     for d in range(n_draws):
         roots = _draw_roots(adata, dc_values, n_roots, mode, rng)
-        pt, _, _ = run_multi_root_dpt(adata, roots)
+        pt, _, _ = run_multi_root_dpt(adata, roots, base=base, reuse=reuse)
         r = float(spearmanr(original_pt, pt).statistic)
         corrs = correlate_all_features(obs, pt)
         for f in MORPH_FEATURES:
@@ -644,6 +690,7 @@ def run_check_a_for_section(
     n_permutations: int,
     dc_index_override: int = None,
     n_random_draws: int = 0,
+    use_fast_null: bool = True,
 ) -> dict:
     """Check A for one section: both DC1 tails, full side-by-side."""
     obs = adata.obs
@@ -732,11 +779,20 @@ def run_check_a_for_section(
     print(f"  [{section}] axis identity: {axis_identity['verdict']}")
 
     nulls = {}
+    fast_check = None
     if n_random_draws > 0:
+        fast_base = None
+        if use_fast_null:
+            print(f"  [{section}] verifying fast DPT path against the copy path ...")
+            fast_check = verify_fast_dpt_equivalence(adata, int(np.argmin(dc_values)))
+            print(f"  [{section}] fast path verified identical "
+                  f"(max abs diff {fast_check['max_abs_diff']:.1e})")
+            fast_base = build_dpt_adata(adata)
         for mode in ("uniform", "clustered"):
             print(f"  [{section}] {mode} root null ({n_random_draws} draws) ...")
             nulls[mode] = run_root_null(
-                adata, original_pt, obs, dc_values, n_roots, n_random_draws, mode=mode
+                adata, original_pt, obs, dc_values, n_roots, n_random_draws, mode=mode,
+                base=fast_base, reuse=use_fast_null,
             )
             print(f"  [{section}] {mode} |rho| range "
                   f"[{nulls[mode]['min_abs_rho']:.4f}, {nulls[mode]['max_abs_rho']:.4f}], "
@@ -784,6 +840,7 @@ def run_check_a_for_section(
         "random_root_null": random_null,
         "root_nulls": nulls,
         "axis_identity": axis_identity,
+        "fast_dpt_equivalence_check": fast_check,
     }
 
 
@@ -1482,7 +1539,13 @@ def main() -> None:
                         help="Root count; must match the production run (default: 20)")
     parser.add_argument("--n-permutations", type=int, default=1000,
                         help="Permutation shuffles (default: 1000, matching production)")
-    parser.add_argument("--n-random-draws", type=int, default=5,
+    parser.add_argument("--no-fast-null", action="store_true",
+                        help="Force the per-root adata.copy() path for null draws. "
+                             "By default the null reuses one AnnData, which is "
+                             "verified identical on real data before use and is what "
+                             "makes a null of useful size affordable. Primary results "
+                             "always use the copy path regardless of this flag.")
+    parser.add_argument("--n-random-draws", type=int, default=25,
                         help="Random-root null draws per section (default: 5). Each "
                              "draw seeds 20 uniformly-random roots and reports "
                              "rho vs the original pseudotime, calibrating what the "
@@ -1531,7 +1594,7 @@ def main() -> None:
         for section, (adata, validation, _) in loaded.items():
             res = run_check_a_for_section(
                 section, adata, validation, args.n_roots, args.n_permutations,
-                args.dc_index, args.n_random_draws,
+                args.dc_index, args.n_random_draws, not args.no_fast_null,
             )
             res["_original_pt"] = adata.obs["pseudotime"].values.astype(float)
             check_a[section] = res
@@ -1572,6 +1635,7 @@ def main() -> None:
             "n_permutations": args.n_permutations,
             "dc_index_override": args.dc_index,
             "n_random_draws": args.n_random_draws,
+            "fast_null_path": not args.no_fast_null,
             "survive_threshold": SURVIVE_THRESHOLD,
             "robust_delta_tolerance": ROBUST_DELTA_TOL,
             "reproduction_tolerance": REPRO_TOL,
