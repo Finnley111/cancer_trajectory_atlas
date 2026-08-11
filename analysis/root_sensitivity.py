@@ -174,15 +174,20 @@ def check_required_columns(adata) -> list:
 
 # ── Check A: diffusion-component root selection ───────────────────────────────
 
-def pick_diffusion_component(adata) -> dict:
+def pick_diffusion_component(adata, dc_index_override: int = None) -> dict:
     """Identify the first NON-TRIVIAL diffusion component in adata.obsm['X_diffmap'].
 
-    scanpy's `sc.tl.diffmap` returns the trivial constant eigenvector (eigenvalue
-    ~1.0, zero variance) as column 0; the first component carrying structure is
-    normally column 1. Rather than hardcode index 1, this detects the trivial
-    column empirically by relative standard deviation and reports what it found,
-    so an unexpected scanpy layout surfaces instead of silently shifting the
-    analysis onto the wrong vector.
+    scanpy's `sc.tl.diffmap` returns the steady-state eigenvector as column 0;
+    the first component carrying trajectory structure is normally column 1.
+
+    The steady-state vector is NOT numerically constant — it is unit-norm and
+    near-constant-positive (it tracks the stationary distribution / local graph
+    degree), so its std is small but nonzero. Detecting it by "std ~= 0" fails,
+    which is exactly the bug that made the first run of this analysis seed roots
+    from graph density instead of from DC1. Detection therefore keys on the two
+    decisive signatures: eigenvalue == 1, and |mean|/std >> 0 (a non-trivial
+    component is mean-zero, so its std equals 1/sqrt(n_patches) for a unit-norm
+    eigenvector, and its |mean|/std is ~0).
     """
     if "X_diffmap" not in adata.obsm:
         raise KeyError(
@@ -194,27 +199,84 @@ def pick_diffusion_component(adata) -> dict:
     stds = dm.std(axis=0)
     max_std = float(stds.max()) if stds.size else 0.0
 
-    trivial = [int(i) for i in np.where(stds <= 1e-8 * max(max_std, 1e-12))[0]]
-    nontrivial = [int(i) for i in range(dm.shape[1]) if i not in trivial]
-    if not nontrivial:
-        raise ValueError("All diffusion-map columns are constant — cannot seed from DC1.")
-    dc_index = nontrivial[0]
+    means = dm.mean(axis=0)
+    # |mean| / std. A non-trivial diffusion component is mean-zero, so this is
+    # ~0; the steady-state eigenvector is near-constant and positive, so this is
+    # large (order sqrt(N) in the limit). This is the decisive discriminator —
+    # NOT std alone, which merely looks "small" for the trivial vector rather
+    # than zero, and which an earlier version of this function wrongly relied on.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mean_over_std = np.abs(means) / np.where(stds > 0, stds, np.nan)
 
     evals = adata.uns.get("diffmap_evals")
-    evals_list = [float(v) for v in np.asarray(evals).ravel()] if evals is not None else None
+    evals_arr = np.asarray(evals).ravel().astype(float) if evals is not None else None
+    evals_list = [float(v) for v in evals_arr] if evals_arr is not None else None
+
+    trivial = []
+    reasons = {}
+    for i in range(dm.shape[1]):
+        why = []
+        # Signature 1: eigenvalue exactly 1 — the stationary eigenvector of a
+        # diffusion (row-stochastic) operator.
+        if evals_arr is not None and i < len(evals_arr) and abs(evals_arr[i] - 1.0) <= 1e-6:
+            why.append(f"eigenvalue {evals_arr[i]:.8f} ~= 1")
+        # Signature 2: near-constant single-sign vector.
+        if np.isfinite(mean_over_std[i]) and mean_over_std[i] > 1.0:
+            why.append(f"|mean|/std = {mean_over_std[i]:.2f} > 1 (near-constant)")
+        # Signature 3: numerically constant.
+        if stds[i] <= 1e-8 * max(max_std, 1e-12):
+            why.append("numerically constant")
+        if why:
+            trivial.append(i)
+            reasons[str(i)] = "; ".join(why)
+
+    nontrivial = [int(i) for i in range(dm.shape[1]) if i not in trivial]
+    if not nontrivial:
+        raise ValueError("Every diffusion-map column looks trivial — cannot seed from DC1.")
+
+    if dc_index_override is not None:
+        if not (0 <= dc_index_override < dm.shape[1]):
+            raise ValueError(
+                f"--dc-index {dc_index_override} out of range for X_diffmap with "
+                f"{dm.shape[1]} columns."
+            )
+        dc_index = int(dc_index_override)
+        selection = f"forced via --dc-index {dc_index}"
+    else:
+        dc_index = nontrivial[0]
+        selection = "first non-trivial column"
+
+    # Hard guard: refuse to seed from a column that looks like the steady state.
+    if dc_index in trivial:
+        raise ValueError(
+            f"X_diffmap column {dc_index} was selected but is TRIVIAL "
+            f"({reasons[str(dc_index)]}). Seeding roots from the steady-state "
+            "eigenvector ranks patches by stationary graph density, not by "
+            "position along a diffusion component, which is not the intended "
+            "test. First non-trivial column is "
+            f"{nontrivial[0]}; re-run with --dc-index {nontrivial[0]} to override."
+        )
+
+    if dc_index != 1:
+        print(f"  NOTE: DC1 resolved to X_diffmap column {dc_index}, not the usual "
+              f"column 1. Trivial columns detected: {trivial}.")
 
     return {
         "n_diffmap_columns": int(dm.shape[1]),
         "column_stds": [float(s) for s in stds],
+        "column_means": [float(m) for m in means],
+        "column_abs_mean_over_std": [float(r) for r in mean_over_std],
+        "expected_std_if_unit_norm_mean_zero": float(1.0 / np.sqrt(dm.shape[0])),
         "trivial_columns_detected": trivial,
+        "trivial_detection_reasons": reasons,
         "dc_index_used": dc_index,
+        "dc_index_selection": selection,
         "dc_index_note": (
-            f"Using X_diffmap column {dc_index} as DC1. Columns {trivial} were "
-            "detected as constant (scanpy's trivial eigenvector) and skipped."
-            if trivial else
-            f"Using X_diffmap column {dc_index} as DC1. No constant column was "
-            "detected — note this differs from the usual scanpy layout, where "
-            "column 0 is the trivial constant eigenvector; inspect column_stds."
+            f"Using X_diffmap column {dc_index} as DC1 ({selection}). Columns "
+            f"{trivial} were detected as trivial and skipped — see "
+            "trivial_detection_reasons. A non-trivial diffusion component is "
+            "unit-norm and mean-zero, so its std should be ~1/sqrt(n_patches) = "
+            f"{1.0 / np.sqrt(dm.shape[0]):.6f}; compare against column_stds."
         ),
         "diffmap_evals": evals_list,
     }
@@ -405,13 +467,14 @@ def run_check_a_for_section(
     validation: dict,
     n_roots: int,
     n_permutations: int,
+    dc_index_override: int = None,
 ) -> dict:
     """Check A for one section: both DC1 tails, full side-by-side."""
     obs = adata.obs
     original_pt = obs["pseudotime"].values.astype(float)
     nuclear_density = obs["nuclear_density"].values.astype(float)
 
-    dc_info = pick_diffusion_component(adata)
+    dc_info = pick_diffusion_component(adata, dc_index_override)
     dc_values = np.asarray(adata.obsm["X_diffmap"], dtype=float)[:, dc_info["dc_index_used"]]
 
     # Original correlations, recomputed from stored obs and reconciled.
@@ -1069,6 +1132,11 @@ def main() -> None:
                         help="Root count; must match the production run (default: 20)")
     parser.add_argument("--n-permutations", type=int, default=1000,
                         help="Permutation shuffles (default: 1000, matching production)")
+    parser.add_argument("--dc-index", type=int, default=None,
+                        help="Force the X_diffmap column used as DC1, bypassing "
+                             "trivial-eigenvector detection. Leave unset (default) "
+                             "to auto-detect; the module refuses to seed from a "
+                             "column it identifies as the steady-state eigenvector.")
     parser.add_argument("--skip-check-a", action="store_true")
     parser.add_argument("--skip-check-c", action="store_true")
     args = parser.parse_args()
@@ -1107,7 +1175,8 @@ def main() -> None:
         print("=" * 64)
         for section, (adata, validation, _) in loaded.items():
             res = run_check_a_for_section(
-                section, adata, validation, args.n_roots, args.n_permutations
+                section, adata, validation, args.n_roots, args.n_permutations,
+                args.dc_index,
             )
             res["_original_pt"] = adata.obs["pseudotime"].values.astype(float)
             check_a[section] = res
@@ -1146,6 +1215,7 @@ def main() -> None:
         "parameters": {
             "n_roots": args.n_roots,
             "n_permutations": args.n_permutations,
+            "dc_index_override": args.dc_index,
             "survive_threshold": SURVIVE_THRESHOLD,
             "robust_delta_tolerance": ROBUST_DELTA_TOL,
             "reproduction_tolerance": REPRO_TOL,
