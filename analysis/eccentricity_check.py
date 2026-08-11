@@ -91,6 +91,7 @@ from .root_sensitivity import (
     _json_default,
     _safe_rho,
     pick_diffusion_component,
+    root_provenance,
 )
 
 N_BINS_DEFAULT = 10
@@ -171,6 +172,84 @@ def _feature_z(obs) -> np.ndarray:
         z[finite] = (v[finite] - mu) / sd
         Z[:, j] = z
     return Z
+
+
+def check_production_root_provenance(section: str, adata, n_roots: int = 20) -> dict:
+    """Which slides do the ACTUAL production roots come from?
+
+    root_sensitivity reported provenance for the DC1 tails and all 50 null draws
+    but never for the root set that produced the pseudotime being analysed. That
+    matters: tightly-clustered root sets land inside a single slide as a matter of
+    course (2M-1 clustered draws 1/18/24 were 100% one slide; both DC1 tails were
+    85-95%), and the production rule — the 20 LOWEST-nuclear_density patches — is
+    exactly such a clustered set. If those roots sit in one slide's lobe, the
+    pseudotime is anchored to a batch direction.
+
+    Reconstructible with no DPT: obs['nuclear_density'] is produced by the same
+    code path as compute_nuclear_density_quick (both _deconvolve_hematoxylin ->
+    _segment_nuclei_simple -> compute_nuclear_density, since use_stardist=False),
+    so argsort(...)[:n] recovers the production root set.
+
+    Self-verifying: DPT pseudotime is zero AT its roots, so if the reconstruction
+    is correct the recovered roots must sit at pseudotime ~= 0. That check is
+    reported, and a failure means the reconstruction is wrong and the provenance
+    below must not be trusted.
+    """
+    obs = adata.obs
+    nd = obs["nuclear_density"].values.astype(float)
+    pt = obs["pseudotime"].values.astype(float)
+
+    order = np.argsort(nd)
+    roots = [int(i) for i in order[:n_roots]]
+
+    prov = root_provenance(adata, roots)
+
+    root_pt = pt[roots]
+    pt_rank = np.array([float((pt < v).mean()) for v in root_pt])
+    reconstruction_ok = bool(np.median(root_pt) <= 0.05)
+
+    ties = int((nd <= nd[roots].max()).sum())
+
+    return {
+        "section": section,
+        "n_roots": n_roots,
+        "root_indices": roots,
+        "root_nuclear_density_min": float(nd[roots].min()),
+        "root_nuclear_density_max": float(nd[roots].max()),
+        "n_patches_at_or_below_root_threshold": ties,
+        "tie_inflation": ties - n_roots,
+        "root_pseudotime_median": float(np.median(root_pt)),
+        "root_pseudotime_max": float(root_pt.max()),
+        "root_pseudotime_percentile_median": float(np.median(pt_rank)),
+        "reconstruction_verified": reconstruction_ok,
+        "reconstruction_note": (
+            "VERIFIED — the reconstructed roots sit at pseudotime ~0, as DPT "
+            "requires of its own roots, so this is the production root set."
+            if reconstruction_ok else
+            "NOT VERIFIED — the reconstructed roots do NOT sit at pseudotime ~0 "
+            f"(median {float(np.median(root_pt)):.4f}). The reconstruction does not "
+            "match the roots DPT actually used; treat the provenance below as "
+            "unreliable and do not report it."
+        ),
+        "provenance": prov,
+        "verdict": (
+            ("SINGLE-SLIDE DOMINATED — "
+             f"{prov.get('max_share_from_one_slide', float('nan')):.0%} of the "
+             f"{n_roots} production roots come from one slide "
+             f"({prov.get('n_distinct_slides')} slides total). The pseudotime "
+             "origin is a single slide's local region, so 'early' is defined by "
+             "that slide and the axis carries a batch direction. This is a "
+             "confound in the production pipeline, not just in the re-analysis."
+             if prov.get("single_slide_dominated") else
+             f"SPREAD ACROSS SLIDES — {prov.get('n_distinct_slides')} slides among "
+             f"the {n_roots} production roots, largest share "
+             f"{prov.get('max_share_from_one_slide', float('nan')):.0%}. The origin "
+             "is not anchored to one slide, so the axis does not inherit a "
+             "single-slide batch direction from its roots.")
+            if reconstruction_ok else
+            "UNDETERMINED — reconstruction not verified; see reconstruction_note."
+        ),
+    }
 
 
 # ── Task A: which geometry is the pseudotime? ─────────────────────────────────
@@ -708,7 +787,8 @@ def build_verdicts(task_a: dict, task_b: dict) -> dict:
     }
 
 
-def write_report(output_dir: Path, task_a: dict, task_b: dict, verdicts: dict) -> None:
+def write_report(output_dir: Path, task_a: dict, task_b: dict, verdicts: dict,
+                 root_prov: dict = None) -> None:
     L = ["# Is the pseudotime a trajectory, or an eccentricity measure?", ""]
     L.append(
         "**Why this analysis exists.** `root_sensitivity` found that the per-section "
@@ -731,6 +811,27 @@ def write_report(output_dir: Path, task_a: dict, task_b: dict, verdicts: dict) -
         "diffusion map was built from) and in morphological-feature space (which the "
         "paper's claims are actually about) — DPT is not defined in terms of either."
     )
+    L.append("")
+
+    L += ["## Task 0 — where do the PRODUCTION roots come from?", ""]
+    L.append(
+        "root_sensitivity reported root provenance for the DC1 tails and all 50 null "
+        "draws, but never for the root set that actually produced this pseudotime. "
+        "Tightly-clustered root sets land inside a single slide routinely, and the "
+        "production rule (20 lowest-nuclear_density patches) is such a set. Each row "
+        "below is self-verified: DPT pseudotime is zero at its own roots, so a correct "
+        "reconstruction must sit at pseudotime ~0."
+    )
+    L.append("")
+    for section, rp in (root_prov or {}).items():
+        pr = rp["provenance"]
+        L.append(
+            f"- **{section}** — reconstruction {'VERIFIED' if rp['reconstruction_verified'] else 'NOT VERIFIED'} "
+            f"(root pseudotime median {_fmt(rp['root_pseudotime_median'])}); "
+            f"{pr.get('n_distinct_slides')} slides among {rp['n_roots']} roots, largest share "
+            f"{pr.get('max_share_from_one_slide', float('nan')):.0%}; "
+            f"index span {pr.get('index_span')} of {pr.get('n_patches')}. {rp['verdict']}"
+        )
     L.append("")
 
     L += ["## Task A — which geometry is the pseudotime?", ""]
@@ -918,6 +1019,7 @@ def main() -> None:
             "eccentricity_strong_threshold": ECC_STRONG,
             "directional_gap_threshold": DIRECTIONAL_GAP,
         },
+        "task_0_production_root_provenance": root_prov,
         "task_a_which_geometry": task_a,
         "task_b_late_heterogeneity": task_b,
         "verdicts": verdicts,
@@ -926,7 +1028,7 @@ def main() -> None:
         json.dump(payload, f, indent=2, default=_json_default)
     print(f"\n  JSON: {args.output_dir / 'eccentricity_check.json'}")
 
-    write_report(args.output_dir, task_a, task_b, verdicts)
+    write_report(args.output_dir, task_a, task_b, verdicts, root_prov)
     print(f"  Markdown: {args.output_dir / 'eccentricity_report.md'}")
 
     print("\n" + "=" * 64)

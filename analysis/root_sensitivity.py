@@ -1189,7 +1189,14 @@ def build_verdicts(check_a: dict, check_c: dict) -> dict:
     # ── 1. nuclear_density ────────────────────────────────────────────────────
     nd_rows = _null_rows("nuclear_density")
     if nd_rows:
-        outside = [s for s, fs in nd_rows if not fs["original_inside_null_range"]]
+        # An "outside" call that clears the null by a hair, or comes from a null too
+        # wide to discriminate, is not an effect. Reading the raw inside/outside
+        # boolean here would contradict this module's own per-feature attribution.
+        outside = [s for s, fs in nd_rows
+                   if not fs["original_inside_null_range"]
+                   and not fs.get("marginal_call")
+                   and not fs.get("null_non_discriminative")]
+        marginal = [s for s, fs in nd_rows if fs.get("marginal_call")]
         detail = "; ".join(
             f"{s}: original {_fmt(fs['original_rho'])} vs random-root null "
             f"[{_fmt(fs['null_min'])}, {_fmt(fs['null_max'])}] → "
@@ -1198,14 +1205,19 @@ def build_verdicts(check_a: dict, check_c: dict) -> dict:
         )
         v1 = (
             f"{'NOT ROBUST' if outside else 'ROBUST'} — {detail}. "
-            + ("The nuclear_density correlation lies within the range produced by "
-               "arbitrary root sets, so it is NOT attributable to the "
-               "lowest-nuclear-density root rule and the circularity concern does "
-               "not undermine it."
+            + ("The nuclear_density correlation is not established outside the range "
+               "produced by arbitrary root sets, so it is NOT attributable to the "
+               "lowest-nuclear-density root rule on this evidence."
                if not outside else
                f"In {outside} the original value falls outside what arbitrary root "
-               "sets produce, so the root rule does contribute to it and it must "
-               "not be presented as independent validation.")
+               "sets produce by more than a marginal amount, so the root rule does "
+               "contribute to it and it must not be presented as independent "
+               "validation.")
+            + (f" Marginal (inconclusive, not counted): {marginal}." if marginal else "")
+            + " NOTE: with n draws the smallest achievable one-sided empirical p is "
+              "1/(n+1); at 25 draws that floor is 0.038, so this test cannot support "
+              "a multiplicity-corrected claim across 12 feature-section tests "
+              "(which needs p < 0.004, i.e. >= 250 draws)."
         )
     else:
         v1 = ("UNDETERMINED — no random-root null was computed (--n-random-draws 0), "
@@ -1214,16 +1226,23 @@ def build_verdicts(check_a: dict, check_c: dict) -> dict:
 
     # ── 2. the other five features ────────────────────────────────────────────
     others = [f for f in MORPH_FEATURES if f != "nuclear_density"]
-    inside_n, total_n, outside_list = 0, 0, []
+    inside_n, total_n, outside_list, marginal_list = 0, 0, [], []
     for feat in others:
         for section, fs in _null_rows(feat):
             total_n += 1
             if fs["original_inside_null_range"]:
                 inside_n += 1
+            elif fs.get("marginal_call") or fs.get("null_non_discriminative"):
+                marginal_list.append(
+                    f"{section}/{feat} (orig {_fmt(fs['original_rho'])}, outside by "
+                    f"{fs.get('relative_margin_outside', float('nan')):.1%} of the "
+                    f"null's width)"
+                )
             else:
                 outside_list.append(
                     f"{section}/{feat} (orig {_fmt(fs['original_rho'])}, null "
-                    f"[{_fmt(fs['null_min'])}, {_fmt(fs['null_max'])}])"
+                    f"[{_fmt(fs['null_min'])}, {_fmt(fs['null_max'])}], outside by "
+                    f"{fs.get('relative_margin_outside', float('nan')):.1%} of width)"
                 )
     if total_n:
         v2 = (
@@ -1232,8 +1251,10 @@ def build_verdicts(check_a: dict, check_c: dict) -> dict:
             "rule. "
             + ("All five features in both sections are root-insensitive."
                if not outside_list else
-               f"Outside the null range: {'; '.join(outside_list)} — the root rule "
-               "contributes to these and they need the caveat.")
+               f"Outside by more than a marginal amount: {'; '.join(outside_list)} — "
+               "the root rule contributes to these and they need the caveat.")
+            + (f" INCONCLUSIVE (outside but marginal, not counted either way): "
+               f"{'; '.join(marginal_list)}." if marginal_list else "")
         )
     else:
         v2 = "UNDETERMINED — no random-root null was computed."
