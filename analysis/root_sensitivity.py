@@ -1389,23 +1389,41 @@ def write_report(output_dir: Path, check_a: dict, check_c: dict, verdicts: dict)
         "does not account for it."
     )
     L.append("")
-    L.append("| section | feature | original rho | random-root null range | inside? | attribution |")
-    L.append("|---|---|---|---|---|---|")
-    for section, res in check_a.items():
-        nul = (res.get("root_nulls") or {}).get("uniform")
-        if not nul:
-            continue
-        for feat in MORPH_FEATURES:
-            fs = nul["feature_rho_null"].get(feat, {})
-            if fs.get("original_inside_null_range") is None:
-                continue
-            L.append(
-                f"| {section} | {feat} | {_fmt(fs['original_rho'])} | "
-                f"[{_fmt(fs['null_min'])}, {_fmt(fs['null_max'])}] | "
-                f"{'**yes**' if fs['original_inside_null_range'] else '**NO**'} | "
-                f"{fs['attribution']} |"
-            )
+    L.append(
+        "Rendered for EVERY null mode. Reading only the uniform table would hide that "
+        "the clustered null — the one whose tight local structure actually matches the "
+        "production root set — may be too wide to discriminate at all."
+    )
     L.append("")
+    for section, res in check_a.items():
+        for mode, nul in (res.get("root_nulls") or {}).items():
+            fr = nul.get("feature_rho_null") or {}
+            widths = [fs.get("null_range_width") for fs in fr.values()
+                      if fs.get("null_range_width") is not None]
+            wide = [fs.get("null_non_discriminative") for fs in fr.values()]
+            n_wide = sum(1 for w in wide if w)
+            hdr = f"**{section} — {mode} null**"
+            if widths:
+                hdr += f" (range widths {min(widths):.2f}–{max(widths):.2f}"
+                hdr += (f"; {n_wide} of {len(wide)} features flagged NON-DISCRIMINATIVE)"
+                        if n_wide else ")")
+            L.append(hdr)
+            L.append("")
+            L.append("| feature | original rho | null range | width | inside? | attribution |")
+            L.append("|---|---|---|---|---|---|")
+            for feat in MORPH_FEATURES:
+                fs = fr.get(feat, {})
+                if fs.get("original_inside_null_range") is None:
+                    continue
+                w = fs.get("null_range_width")
+                L.append(
+                    f"| {feat} | {_fmt(fs['original_rho'])} | "
+                    f"[{_fmt(fs['null_min'])}, {_fmt(fs['null_max'])}] | "
+                    f"{_fmt(w) if w is not None else 'n/a'} | "
+                    f"{'**yes**' if fs['original_inside_null_range'] else '**NO**'} | "
+                    f"{fs['attribution']} |"
+                )
+            L.append("")
 
     nulls = {sec: (r.get("root_nulls") or {}).get("uniform") for sec, r in check_a.items()}
     if any(nulls.values()):
