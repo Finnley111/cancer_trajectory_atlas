@@ -99,6 +99,10 @@ EXTREME_DECILE = 0.10          # tail fraction used for bidirectional enrichment
 ENRICH_THRESHOLD = 1.5         # fold-enrichment counted as "enriched"
 ECC_STRONG = 0.50              # |rho| for a convincing eccentricity signal
 DIRECTIONAL_GAP = 0.20         # |rho(|z|)| - |rho(signed z)| that implies directionless
+COHORT_RHO_MIN = 0.15          # |rho| for a feature to count as directional
+WITHIN_SLIDE_RETENTION = 0.50  # fraction of cohort |rho| a feature must keep within slide
+ETA2_CONCERN = 0.15            # slide-explained pseudotime rank variance that concerns
+FOLD_CONCERN = 3.0             # late-tail single-slide over-representation that concerns
 
 
 # ── Loading ───────────────────────────────────────────────────────────────────
@@ -254,6 +258,148 @@ def check_production_root_provenance(section: str, adata, n_roots: int = 20) -> 
 
 # ── Task A: which geometry is the pseudotime? ─────────────────────────────────
 
+def per_feature_directionality(adata) -> dict:
+    """Per-feature signed correlation with pseudotime, cohort-wide AND within slide.
+
+    Replaces the cross-feature mean-signed-z statistic, which cancels when features
+    move in opposite directions consistently (an ordinary trajectory) and therefore
+    cannot distinguish direction from eccentricity. Keeping features separate
+    avoids that cancellation entirely.
+
+    The within-slide column is the batch test that matters: a correlation that is
+    strong cohort-wide but ~0 inside every slide is a BETWEEN-SLIDE effect, i.e.
+    the pseudotime is ordering slides rather than morphology.
+    """
+    obs = adata.obs
+    pt = obs["pseudotime"].values.astype(float)
+    slides = obs["slide_id"].astype(str).values if "slide_id" in obs.columns else None
+
+    out = {}
+    for feat in MORPH_FEATURES:
+        v = obs[feat].values.astype(float)
+        cohort = _safe_rho(pt, v)
+        entry = {"cohort_rho": cohort}
+        if slides is not None:
+            per = {}
+            for sl in sorted(set(slides)):
+                m = slides == sl
+                if m.sum() >= 30:
+                    per[sl] = _safe_rho(pt[m], v[m])
+            vals = [x for x in per.values() if np.isfinite(x)]
+            med = float(np.median(vals)) if vals else float("nan")
+            same = (int(sum(1 for x in vals if np.sign(x) == np.sign(cohort)))
+                    if vals and np.isfinite(cohort) else 0)
+            strong_enough = bool(np.isfinite(cohort) and abs(cohort) >= COHORT_RHO_MIN)
+            survives = bool(
+                strong_enough and np.isfinite(med)
+                and np.sign(med) == np.sign(cohort)
+                and abs(med) >= WITHIN_SLIDE_RETENTION * abs(cohort)
+            )
+            entry.update({
+                "per_slide_rho": per,
+                "median_within_slide_rho": med,
+                "n_slides": len(vals),
+                "n_slides_same_sign_as_cohort": same,
+                "retention": (abs(med) / abs(cohort))
+                             if (np.isfinite(med) and abs(cohort) > 0) else float("nan"),
+                "survives_within_slide": survives,
+                "interpretation": (
+                    "survives within slide — a real morphological relationship"
+                    if survives else
+                    "BETWEEN-SLIDE ONLY — the cohort-wide correlation does not hold "
+                    "inside slides; pseudotime is ordering slides on this feature"
+                    if strong_enough else
+                    f"cohort correlation too weak to test (|rho| < {COHORT_RHO_MIN})"
+                ),
+            })
+        out[feat] = entry
+
+    strong = [f for f, e in out.items()
+              if np.isfinite(e["cohort_rho"]) and abs(e["cohort_rho"]) >= COHORT_RHO_MIN]
+    survivors = [f for f in strong if out[f].get("survives_within_slide")]
+    return {
+        "per_feature": out,
+        "n_features_directional_cohort": len(strong),
+        "directional_features": strong,
+        "n_features_surviving_within_slide": len(survivors),
+        "surviving_features": survivors,
+        "threshold_cohort_rho": COHORT_RHO_MIN,
+        "within_slide_retention_required": WITHIN_SLIDE_RETENTION,
+        "note": (
+            "A feature is directional if |cohort rho| >= threshold, and survives if "
+            "the median within-slide rho keeps the sign and at least the required "
+            "fraction of the magnitude. Cross-feature averaging is deliberately "
+            "avoided — it cancels genuine opposite-direction trajectories."
+        ),
+    }
+
+
+def slide_confound(adata, tail: float) -> dict:
+    """How much of the pseudotime ordering is slide identity?
+
+    Reports (a) the fraction of pseudotime RANK variance explained by slide
+    (eta^2 on ranks — distribution-free and comparable across sections), and
+    (b) how concentrated each end of the range is in one slide against the
+    even-share baseline. A late tail dominated by one slide means 'late' is partly
+    a batch label.
+    """
+    obs = adata.obs
+    if "slide_id" not in obs.columns:
+        return {"available": False, "reason": "adata.obs has no 'slide_id'."}
+
+    pt = obs["pseudotime"].values.astype(float)
+    slides = obs["slide_id"].astype(str).values
+    ranks = pt.argsort().argsort().astype(float)
+
+    grand = ranks.mean()
+    ss_total = float(((ranks - grand) ** 2).sum())
+    ss_between = 0.0
+    for sl in set(slides):
+        m = slides == sl
+        ss_between += float(m.sum()) * (ranks[m].mean() - grand) ** 2
+    eta2 = (ss_between / ss_total) if ss_total > 0 else float("nan")
+
+    uniq = sorted(set(slides))
+    even = 1.0 / len(uniq)
+    ends = {}
+    for name, m in (("late", pt >= np.quantile(pt, 1 - tail)),
+                    ("early", pt <= np.quantile(pt, tail))):
+        u, c = np.unique(slides[m], return_counts=True)
+        top = int(c.max())
+        ends[name] = {
+            "top_slide": str(u[int(np.argmax(c))]),
+            "top_slide_share": float(top / m.sum()),
+            "even_share_baseline": even,
+            "fold_over_even": float((top / m.sum()) / even),
+            "n_distinct_slides": int(len(u)),
+        }
+
+    concerning = bool(eta2 >= ETA2_CONCERN
+                      or ends["late"]["fold_over_even"] >= FOLD_CONCERN)
+    return {
+        "available": True,
+        "n_slides": len(uniq),
+        "pseudotime_rank_variance_explained_by_slide": float(eta2),
+        "ends": ends,
+        "late_vs_early_concentration_ratio": float(
+            ends["late"]["fold_over_even"] / max(ends["early"]["fold_over_even"], 1e-9)
+        ),
+        "verdict": (
+            f"SLIDE-CONFOUNDED — slide identity explains {eta2:.1%} of pseudotime "
+            f"rank variance, and the late tail is "
+            f"{ends['late']['fold_over_even']:.1f}x over-represented for slide "
+            f"{ends['late']['top_slide']} ({ends['late']['top_slide_share']:.0%} of "
+            f"it) against a {even:.0%} even share. 'Late' is partly a batch label, "
+            "so any morphological correlation must be shown to hold WITHIN slides "
+            "before it can be read as biology."
+            if concerning else
+            f"NOT STRONGLY SLIDE-CONFOUNDED — slide explains {eta2:.1%} of rank "
+            f"variance; the late tail's top slide is "
+            f"{ends['late']['fold_over_even']:.1f}x the even share."
+        ),
+    }
+
+
 def run_task_a(section: str, adata) -> dict:
     """Correlate pseudotime with eccentricity in three spaces + graph sparsity."""
     obs = adata.obs
@@ -323,11 +469,15 @@ def run_task_a(section: str, adata) -> dict:
         "morph_mean_signed_z": {
             "rho": _safe_rho(pt, mean_signed_z),
             "space": "morphological features, mean signed z across the six",
-            "status": "DECISIVE",
+            "status": "INVALID — DO NOT CITE",
             "note": (
-                "SIGNED deviation. If the unsigned term tracks pseudotime and this "
-                "one does not, late patches are extreme in inconsistent directions "
-                "— the eccentricity signature."
+                "This statistic CANCELS when features move in opposite directions "
+                "CONSISTENTLY, which is an ordinary directed trajectory and not "
+                "eccentricity, so it cannot distinguish the two. In 2M-2 three "
+                "features fall and three rise, each strongly and consistently, and "
+                "the mean lands at -0.083 — reading as 'no direction' when the "
+                "opposite is true. Use per_feature_directionality, which keeps "
+                "features separate. Retained only so the flaw stays visible."
             ),
         },
         "dc1": {
@@ -376,23 +526,37 @@ def run_task_a(section: str, adata) -> dict:
                 ),
             }
 
+    directionality = per_feature_directionality(adata)
+    confound = slide_confound(adata, EXTREME_DECILE)
+
     r_abs = measures["morph_mean_abs_z"]["rho"]
     r_sgn = measures["morph_mean_signed_z"]["rho"]
     r_pca = measures["pca_centroid_distance_matched_dims"]["rho"]
     gap = abs(r_abs) - abs(r_sgn)
+    n_dir = directionality["n_features_directional_cohort"]
+    n_surv = directionality["n_features_surviving_within_slide"]
 
-    if abs(r_abs) >= ECC_STRONG and gap >= DIRECTIONAL_GAP:
+    if n_dir >= 3:
         verdict = (
-            f"ECCENTRICITY IN MORPHOLOGY — unsigned deviation tracks pseudotime "
-            f"(rho = {r_abs:+.3f}) while signed deviation does not "
-            f"(rho = {r_sgn:+.3f}). Late patches are morphologically extreme in "
-            "INCONSISTENT directions, which is not a progression."
+            f"DIRECTIONAL IN MORPHOLOGY — {n_dir} of {len(MORPH_FEATURES)} features "
+            f"correlate with pseudotime at |rho| >= {COHORT_RHO_MIN} "
+            f"({directionality['directional_features']}). Each moves consistently, "
+            "which is a directed axis, not eccentricity. "
+            + (f"{n_surv} of those {n_dir} also survive WITHIN slides "
+               f"({directionality['surviving_features']}), so the relationship is "
+               "morphological rather than a slide ordering."
+               if n_surv >= max(1, n_dir // 2) else
+               f"WARNING: only {n_surv} of {n_dir} survive within slides "
+               f"({directionality['surviving_features'] or 'none'}) — the rest are "
+               "BETWEEN-SLIDE effects, so most of this apparent direction is the "
+               "pseudotime ordering slides, not morphology.")
         )
-    elif abs(r_sgn) >= ECC_STRONG and gap <= -DIRECTIONAL_GAP:
+    elif n_dir == 0 and abs(r_abs) >= ECC_STRONG:
         verdict = (
-            f"DIRECTIONAL IN MORPHOLOGY — signed deviation tracks pseudotime "
-            f"(rho = {r_sgn:+.3f}) more strongly than unsigned "
-            f"(rho = {r_abs:+.3f}). Consistent with a directed trajectory."
+            f"ECCENTRICITY IN MORPHOLOGY — NO feature correlates directionally "
+            f"(|rho| >= {COHORT_RHO_MIN}) yet unsigned deviation tracks pseudotime "
+            f"(rho = {r_abs:+.3f}). Late patches are morphologically extreme in "
+            "INCONSISTENT directions, which is not a progression."
         )
     elif abs(r_pca) >= ECC_STRONG:
         verdict = (
@@ -415,6 +579,8 @@ def run_task_a(section: str, adata) -> dict:
         "diffusion_component": dc_info,
         "measures": measures,
         "within_slide": within_slide,
+        "per_feature_directionality": directionality,
+        "slide_confound": confound,
         "verdict": verdict,
         "framing": (
             "Read the DECISIVE rows first, then INFORMATIVE. The DEFINITIONAL rows "
@@ -737,7 +903,9 @@ def build_verdicts(task_a: dict, task_b: dict) -> dict:
     # which is the opposite of what disagreement means.
     per_section = {}
     for s in task_a:
-        ecc = task_a[s]["verdict"].startswith("ECCENTRICITY")
+        # Exact prefix: "ECCENTRICITY IN EMBEDDING ONLY" is an explicitly
+        # ambiguous verdict and must NOT be counted as an eccentricity finding.
+        ecc = task_a[s]["verdict"].startswith("ECCENTRICITY IN MORPHOLOGY")
         e = task_b[s]["bidirectional_enrichment"]
         bi = e["n_features_bidirectional"] > e["n_features_unidirectional"]
         uni = e["n_features_unidirectional"] > e["n_features_bidirectional"]
@@ -751,6 +919,17 @@ def build_verdicts(task_a: dict, task_b: dict) -> dict:
     labels = set(per_section.values())
     detail = "; ".join(f"{s}: {c}" for s, c in per_section.items())
 
+    confounded = [s for s, r in task_a.items()
+                  if (r.get("slide_confound") or {}).get("verdict", "").startswith("SLIDE-CONFOUNDED")]
+    confound_line = (
+        f" SEPARATE AND OVERRIDING CONCERN: {confounded} are slide-confounded — "
+        "the late end of the pseudotime range is dominated by one slide, so a "
+        "directional finding there may be an ordering of slides rather than of "
+        "morphology. Read per_feature_directionality.surviving_features before "
+        "reporting any correlation from those sections."
+        if confounded else ""
+    )
+
     if labels == {"eccentricity"}:
         overall = (
             f"TRAJECTORY FRAMING NOT SUPPORTED — every section reads as eccentricity "
@@ -758,6 +937,7 @@ def build_verdicts(task_a: dict, task_b: dict) -> dict:
             "by how far along a progression they are. Report it as a "
             "morphological-atypicality score, not a trajectory, unless a directed "
             "reading can be established some other way."
+            + confound_line
         )
     elif labels == {"trajectory-compatible"}:
         overall = (
@@ -765,18 +945,21 @@ def build_verdicts(task_a: dict, task_b: dict) -> dict:
             "axis is not eccentricity outside the diffusion map, and late patches move "
             "consistently rather than in opposing directions. The strong "
             "diffusion-space correlation found by root_sensitivity was definitional."
+            + confound_line
         )
     elif "eccentricity" in labels and "trajectory-compatible" in labels:
         overall = (
             f"SECTIONS DISAGREE — {detail}. One section reads as eccentricity and "
             "another as a directed axis, so the two must NOT be pooled and no single "
             "framing covers both. Report them separately and say so."
+            + confound_line
         )
     else:
         overall = (
             f"MIXED / INCONCLUSIVE — {detail}. At least one section fails to resolve "
             "(the geometry test and the directionality test disagree within it), so "
             "neither framing is established there."
+            + confound_line
         )
 
     return {
