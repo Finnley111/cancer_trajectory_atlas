@@ -210,9 +210,9 @@ def check_production_root_provenance(section: str, adata, n_roots: int = 20) -> 
 
     root_pt = pt[roots]
     pt_rank = np.array([float((pt < v).mean()) for v in root_pt])
-    reconstruction_ok = bool(np.median(root_pt) <= 0.05)
 
     ties = int((nd <= nd[roots].max()).sum())
+    n_zero_density = int((nd <= 0).sum())
 
     return {
         "section": section,
@@ -222,37 +222,71 @@ def check_production_root_provenance(section: str, adata, n_roots: int = 20) -> 
         "root_nuclear_density_max": float(nd[roots].max()),
         "n_patches_at_or_below_root_threshold": ties,
         "tie_inflation": ties - n_roots,
+        "n_patches_with_zero_nuclear_density": n_zero_density,
+        "roots_are_all_zero_density": bool(nd[roots].max() <= 0),
         "root_pseudotime_median": float(np.median(root_pt)),
         "root_pseudotime_max": float(root_pt.max()),
         "root_pseudotime_percentile_median": float(np.median(pt_rank)),
-        "reconstruction_verified": reconstruction_ok,
+        # WAS A BOOLEAN GATE ON median(root_pt) <= 0.05. That gate was UNSOUND and
+        # has been removed: it rested on "DPT pseudotime is 0 at its roots", which
+        # holds for a SINGLE root only. diffusion.py:185 takes the MEDIAN over 20
+        # root runs, so a root's own pseudotime is the median of its distances to
+        # all 20 roots — near zero only if the roots are tightly clustered, and the
+        # provenance below shows they are not (6-7 slides, index span >84%).
+        "reconstruction_verified": False,
+        "reconstruction_method": (
+            "Rule-identical to diffusion.py:165 — np.argsort(nuclear_density)[:n_roots]."
+        ),
+        "reconstruction_limitation": (
+            "NOT VERIFIABLE FROM STORED ARTIFACTS, for two independent reasons. "
+            "(1) run_all.py:564 passes compute_nuclear_density_quick(all_patches) — a "
+            "SEPARATE float32 computation that silently returns 0.0 on any exception "
+            "(morphological_features.py:177) — whereas this reconstruction reads "
+            "obs['nuclear_density'] from the full feature pass. The two arrays are "
+            "not the same object and their agreement is unchecked, which matters "
+            "precisely at the zero-density ties where the roots are drawn. "
+            "(2) compute_dpt_multi_root never stores root_candidates, so there is "
+            "nothing to compare against. The root pseudotime figures below are "
+            "diagnostics, NOT a verification — see the note on the removed gate. "
+            "DEFINITIVE FIX: persist root_candidates in compute_dpt_multi_root, then "
+            "this becomes an exact comparison."
+        ),
         "reconstruction_note": (
-            "VERIFIED — the reconstructed roots sit at pseudotime ~0, as DPT "
-            "requires of its own roots, so this is the production root set."
-            if reconstruction_ok else
-            "NOT VERIFIED — the reconstructed roots do NOT sit at pseudotime ~0 "
-            f"(median {float(np.median(root_pt)):.4f}). The reconstruction does not "
-            "match the roots DPT actually used; treat the provenance below as "
-            "unreliable and do not report it."
+            f"Reconstructed roots sit at median pseudotime {float(np.median(root_pt)):.4f} "
+            f"= the {float(np.median(pt_rank)):.0%} percentile of the pseudotime "
+            "distribution. That is NOT evidence for or against the reconstruction: "
+            "median-aggregated multi-root DPT does not place its roots at zero. "
+            "Pseudotime is also strongly right-skewed after min-max normalisation, so "
+            "small absolute values sit at high percentiles — read the percentile."
         ),
         "provenance": prov,
-        "verdict": (
+        "verdict": " ".join(filter(None, [
+            # Slide spread of the origin.
             ("SINGLE-SLIDE DOMINATED — "
              f"{prov.get('max_share_from_one_slide', float('nan')):.0%} of the "
-             f"{n_roots} production roots come from one slide "
-             f"({prov.get('n_distinct_slides')} slides total). The pseudotime "
-             "origin is a single slide's local region, so 'early' is defined by "
-             "that slide and the axis carries a batch direction. This is a "
-             "confound in the production pipeline, not just in the re-analysis."
+             f"{n_roots} rule-reconstructed roots come from one slide "
+             f"({prov.get('n_distinct_slides')} slides total), so 'early' is defined "
+             "by that slide and the axis carries a batch direction."
              if prov.get("single_slide_dominated") else
-             f"SPREAD ACROSS SLIDES — {prov.get('n_distinct_slides')} slides among "
-             f"the {n_roots} production roots, largest share "
-             f"{prov.get('max_share_from_one_slide', float('nan')):.0%}. The origin "
-             "is not anchored to one slide, so the axis does not inherit a "
-             "single-slide batch direction from its roots.")
-            if reconstruction_ok else
-            "UNDETERMINED — reconstruction not verified; see reconstruction_note."
-        ),
+             f"SPREAD ACROSS SLIDES — {prov.get('n_distinct_slides')} slides among the "
+             f"{n_roots} rule-reconstructed roots, largest share "
+             f"{prov.get('max_share_from_one_slide', float('nan')):.0%}, so the origin "
+             "does not inherit a single-slide batch direction."),
+            # The substantive concern: what IS a zero-density patch?
+            (f"ORIGIN IS ZERO-DENSITY PATCHES — all {n_roots} roots have "
+             f"nuclear_density = 0, drawn from {n_zero_density} such patches. "
+             "compute_nuclear_density_quick returns 0.0 both for genuinely acellular "
+             "tissue AND for any patch whose segmentation threw "
+             "(morphological_features.py:177-178), so pseudotime 0 may be anchored on "
+             "background, lumen, fat or segmentation failures rather than on early "
+             "tissue. Inspect these patches before reading the axis as early-to-late."
+             if bool(nd[roots].max() <= 0) else
+             f"Root nuclear_density spans [{float(nd[roots].min()):.2e}, "
+             f"{float(nd[roots].max()):.2e}]; {n_zero_density} patches in the section "
+             "have exactly zero density."),
+            "Root set is rule-reconstructed, not verified — see "
+            "reconstruction_limitation.",
+        ])),
     }
 
 
