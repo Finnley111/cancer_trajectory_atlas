@@ -389,6 +389,77 @@ def run_multi_root_dpt(adata, root_indices: list) -> tuple:
     return pseudotime, pseudotime_std, notes
 
 
+def root_provenance(adata, roots: list) -> dict:
+    """How concentrated are the 20 roots across slides?
+
+    A root set drawn from one small contiguous region of one slide is a local
+    outlier lobe, not a trajectory endpoint, and anchoring DPT there produces an
+    axis dominated by that slide's idiosyncrasies. This is a far more reliable
+    validity signal than the mean nuclear_density of 20 patches.
+    """
+    key = "slide_id" if "slide_id" in adata.obs.columns else None
+    out = {"index_min": int(min(roots)), "index_max": int(max(roots)),
+           "index_span": int(max(roots) - min(roots)), "n_patches": int(adata.n_obs)}
+    out["index_span_as_frac_of_dataset"] = out["index_span"] / max(adata.n_obs - 1, 1)
+    if key is None:
+        out["slide_breakdown"] = None
+        out["note"] = "adata.obs has no 'slide_id' column — provenance is index-based only."
+        return out
+    labels = adata.obs[key].astype(str).values[np.asarray(roots)]
+    uniq, counts = np.unique(labels, return_counts=True)
+    order = np.argsort(-counts)
+    out["n_distinct_slides"] = int(len(uniq))
+    out["slide_breakdown"] = {str(uniq[i]): int(counts[i]) for i in order}
+    out["max_share_from_one_slide"] = float(counts.max() / len(roots))
+    out["single_slide_dominated"] = bool(counts.max() / len(roots) >= 0.8)
+    out["note"] = (
+        f"{out['n_distinct_slides']} distinct slide(s) among {len(roots)} roots; "
+        f"largest single-slide share {out['max_share_from_one_slide']:.0%}; "
+        f"index span {out['index_span']} of {adata.n_obs}. A set concentrated in one "
+        "slide (>=80%) and a narrow index span indicate a local outlier lobe rather "
+        "than a manifold endpoint — treat that tail's axis as unreliable."
+    )
+    return out
+
+
+def run_random_root_null(adata, original_pt: np.ndarray, n_roots: int,
+                         n_draws: int, seed: int = 0) -> dict:
+    """Null baseline: what does rho(original PT, reseeded PT) look like when the
+    20 roots are drawn UNIFORMLY AT RANDOM?
+
+    Without this there is no scale for the DC1 numbers — a geometry-seeded rho of
+    0.52 means something very different if random roots give 0.1 than if they give
+    0.5. Only the pseudotime correlation is computed per draw (no permutation
+    suite), so the cost is n_draws * n_roots DPT runs and nothing else.
+    """
+    rng = np.random.default_rng(seed)
+    rhos, draws = [], []
+    for d in range(n_draws):
+        roots = [int(i) for i in rng.choice(adata.n_obs, size=n_roots, replace=False)]
+        pt, _, _ = run_multi_root_dpt(adata, roots)
+        r = float(spearmanr(original_pt, pt).statistic)
+        rhos.append(r)
+        draws.append({"draw": d, "seed": seed, "rho_vs_original": r,
+                      "root_provenance": root_provenance(adata, roots)})
+        print(f"    random draw {d + 1}/{n_draws}: rho = {r:+.4f}")
+    arr = np.array(rhos, dtype=float)
+    return {
+        "n_draws": n_draws, "n_roots": n_roots, "seed": seed,
+        "rho_vs_original_per_draw": rhos,
+        "mean_abs_rho": float(np.abs(arr).mean()),
+        "median_abs_rho": float(np.median(np.abs(arr))),
+        "min_abs_rho": float(np.abs(arr).min()),
+        "max_abs_rho": float(np.abs(arr).max()),
+        "draws": draws,
+        "note": (
+            "Uniformly-random root sets, same aggregation as every other run here. "
+            "Compare |rho| for the DC1 tails against max_abs_rho: a DC1 tail that "
+            "does not clearly exceed the random ceiling carries no information about "
+            "root choice beyond what any arbitrary root set would give."
+        ),
+    }
+
+
 def correlate_all_features(obs, pseudotime: np.ndarray) -> dict:
     """Spearman rho + p for each of the six morphological features."""
     out = {}
@@ -468,6 +539,7 @@ def run_check_a_for_section(
     n_roots: int,
     n_permutations: int,
     dc_index_override: int = None,
+    n_random_draws: int = 0,
 ) -> dict:
     """Check A for one section: both DC1 tails, full side-by-side."""
     obs = adata.obs
@@ -530,6 +602,7 @@ def run_check_a_for_section(
         tails[tail] = {
             "tail": tail,
             "root_indices": roots,
+            "root_provenance": root_provenance(adata, roots),
             "root_dc1_values": [float(v) for v in dc_values[roots]],
             "root_nuclear_density_mean": float(root_nd.mean()),
             "root_nuclear_density_min": float(root_nd.min()),
@@ -542,10 +615,30 @@ def run_check_a_for_section(
             "pseudotime_std": pt_std_new,  # popped before JSON serialisation
         }
 
-    # Direction labelling: lower-mean-nuclear-density tail is the comparator.
+    # Direction labelling. The 20-root mean nuclear_density is a noisy basis
+    # (20 patches, heavily overlapping ranges), so the primary criterion is now
+    # rho(DC1, nuclear_density) over ALL patches: the sparse end is whichever DC1
+    # tail runs opposite to nuclear density. The 20-root means are retained as a
+    # secondary signal and disagreement between the two is reported, not hidden.
     nd_low = tails["low"]["root_nuclear_density_mean"]
     nd_high = tails["high"]["root_nuclear_density_mean"]
-    direction_matched = "low" if nd_low <= nd_high else "high"
+    by_root_means = "low" if nd_low <= nd_high else "high"
+
+    random_null = None
+    if n_random_draws > 0:
+        print(f"  [{section}] Random-root null baseline ({n_random_draws} draws) ...")
+        random_null = run_random_root_null(adata, original_pt, n_roots, n_random_draws)
+        print(f"  [{section}] random |rho| range "
+              f"[{random_null['min_abs_rho']:.4f}, {random_null['max_abs_rho']:.4f}], "
+              f"median {random_null['median_abs_rho']:.4f}")
+
+    rho_dc_nd = _safe_rho(dc_values, nuclear_density)
+    by_full_n = "low" if rho_dc_nd >= 0 else "high"
+    direction_matched = by_full_n if np.isfinite(rho_dc_nd) else by_root_means
+
+    root_mean_gap = abs(nd_low - nd_high) / max(abs(nd_low), abs(nd_high), 1e-12)
+    prov_low = tails["low"]["root_provenance"]
+    prov_high = tails["high"]["root_provenance"]
 
     return {
         "section": section,
@@ -555,18 +648,29 @@ def run_check_a_for_section(
         "diffusion_component": dc_info,
         "original_correlation_reconciliation": reconciliation,
         "direction_matched_tail": direction_matched,
+        "direction_agreement": {
+            "by_full_n_rho_dc1_vs_nuclear_density": by_full_n,
+            "rho_dc1_vs_nuclear_density": rho_dc_nd,
+            "by_20_root_means": by_root_means,
+            "root_mean_relative_gap": float(root_mean_gap),
+            "criteria_agree": bool(by_full_n == by_root_means),
+        },
         "direction_basis": (
-            f"The DC1 '{direction_matched}' tail's {n_roots} root patches have the "
-            f"lower mean nuclear_density (low tail: {nd_low:.6f}, high tail: "
-            f"{nd_high:.6f}), so it is the sparse/low-density end and yields an axis "
-            "running in the same direction as the production one. nuclear_density is "
-            "used here ONLY to orient and label the axis — the root SET for each tail "
-            "was already fully determined by DC1 geometry, so this is a strictly "
-            "weaker dependence than the production rule, which uses nuclear_density "
-            "to choose the roots themselves. Both tails are reported in full below; "
-            "neither is discarded."
+            f"Primary criterion: rho(DC1, nuclear_density) over all {int(adata.n_obs)} "
+            f"patches = {rho_dc_nd:+.4f}, so the sparse/low-density end is the "
+            f"'{by_full_n}' tail. Secondary criterion (mean nuclear_density of the "
+            f"{n_roots} roots: low {nd_low:.6f} vs high {nd_high:.6f}, relative gap "
+            f"{root_mean_gap:.1%}) points to '{by_root_means}' — these "
+            f"{'AGREE' if by_full_n == by_root_means else 'DISAGREE, so the label is unreliable and BOTH tails must be read'}. "
+            "The 20-root mean is noisy at this n; the full-N criterion is preferred. "
+            "nuclear_density is used ONLY to orient the axis — each tail's root SET "
+            "was fixed by DC1 geometry alone, a strictly weaker dependence than the "
+            "production rule, which uses nuclear_density to pick the roots. Both "
+            "tails are reported in full; neither is discarded. Root provenance — "
+            f"low tail: {prov_low['note']} high tail: {prov_high['note']}"
         ),
         "tails": tails,
+        "random_root_null": random_null,
     }
 
 
@@ -888,6 +992,19 @@ def build_verdicts(check_a: dict, check_c: dict) -> dict:
             if r["robust_to_root_choice"]:
                 n_robust += 1
     not_robust = [f"{s}/{f}" for s, f, r in other_rows if not r["robust_to_root_choice"]]
+
+    # How many of these verdicts would flip if the opposite tail had been labelled
+    # direction-matched? If the orientation criteria disagree, or the alternative
+    # tail gives a materially different count, the verdict is fragile and says so.
+    alt_robust = 0
+    for section, res in check_a.items():
+        alt = "high" if res["direction_matched_tail"] == "low" else "low"
+        alt_robust += sum(
+            res["tails"][alt]["per_feature"][f]["robust_to_root_choice"] for f in others
+        )
+    fragile = [s for s, r in check_a.items()
+               if not r.get("direction_agreement", {}).get("criteria_agree", True)]
+
     v2 = (
         f"{n_robust} of {len(other_rows)} (section, feature) pairs across the five "
         f"non-density features are robust to root choice (|Δρ| ≤ {ROBUST_DELTA_TOL} "
@@ -898,6 +1015,11 @@ def build_verdicts(check_a: dict, check_c: dict) -> dict:
             f"Not robust: {', '.join(not_robust)}. Those correlations depend "
             "materially on the root rule and should be reported with that caveat."
         )
+        + f" Under the OPPOSITE tail the count would be {alt_robust} of {len(other_rows)}"
+        + (f"; orientation criteria disagree for {fragile}, so this verdict is FRAGILE "
+           "and both tails must be reported as co-primary."
+           if fragile else
+           ", reported so the sensitivity of this count to the tail label is visible.")
     )
 
     # (3) confound finding under an alternative covariate
@@ -975,18 +1097,50 @@ def write_report(output_dir: Path, check_a: dict, check_c: dict, verdicts: dict)
         "selection drives the reported results."
     )
     L.append("")
-    L.append("| section | tail | direction-matched? | ρ(original PT, geometry-seeded PT) | root mean nuclear_density |")
-    L.append("|---|---|---|---|---|")
+    L.append("| section | tail | direction-matched? | ρ(original PT, geometry-seeded PT) | roots: distinct slides | max single-slide share |")
+    L.append("|---|---|---|---|---|---|")
     for section, res in check_a.items():
         for tail in ("low", "high"):
             t = res["tails"][tail]
             mark = "**yes**" if tail == res["direction_matched_tail"] else "no"
+            pv = t.get("root_provenance", {})
+            nsl = pv.get("n_distinct_slides")
+            shr = pv.get("max_share_from_one_slide")
+            warn = " ⚠︎" if pv.get("single_slide_dominated") else ""
             L.append(
                 f"| {section} | DC1 {tail} | {mark} | "
                 f"**{_fmt(t['rho_original_vs_reseeded_pseudotime'])}** | "
-                f"{_fmt(t['root_nuclear_density_mean'])} |"
+                f"{nsl if nsl is not None else 'n/a'}{warn} | "
+                f"{f'{shr:.0%}' if shr is not None else 'n/a'} |"
             )
     L.append("")
+    L.append(
+        "⚠︎ marks a tail whose roots are >=80% from a single slide. Such a tail is a "
+        "local outlier lobe, not a manifold endpoint; anchoring DPT there produces an "
+        "axis dominated by one slide and its correlations should not be read as a "
+        "root-choice effect."
+    )
+    L.append("")
+    nulls = {sec: r.get("random_root_null") for sec, r in check_a.items()}
+    if any(nulls.values()):
+        L.append("**Random-root null baseline.** Without a null there is no scale for the "
+                 "numbers above: 0.52 means one thing if random roots give 0.1 and quite "
+                 "another if they give 0.5.")
+        L.append("")
+        L.append("| section | draws | random |ρ| median | random |ρ| max | best DC1 tail |ρ| | DC1 exceeds random ceiling? |")
+        L.append("|---|---|---|---|---|---|")
+        for section, res in check_a.items():
+            nl = res.get("random_root_null")
+            if not nl:
+                continue
+            best = max(abs(res["tails"][t]["rho_original_vs_reseeded_pseudotime"])
+                       for t in ("low", "high"))
+            L.append(
+                f"| {section} | {nl['n_draws']} | {_fmt(nl['median_abs_rho'])} | "
+                f"{_fmt(nl['max_abs_rho'])} | {_fmt(best)} | "
+                f"{'**yes**' if best > nl['max_abs_rho'] else '**NO**'} |"
+            )
+        L.append("")
 
     for section, res in check_a.items():
         L += [f"### {section}", ""]
@@ -994,8 +1148,11 @@ def write_report(output_dir: Path, check_a: dict, check_c: dict, verdicts: dict)
         L.append(f"- n patches: {res['n_patches']}; roots per run: {res['n_roots']}; "
                  f"permutations: {res['n_permutations']}")
         L.append(f"- {dc['dc_index_note']}")
-        L.append(f"- Tail chosen as direction-matched: **DC1 {res['direction_matched_tail']}**. "
-                 f"{res['direction_basis']}")
+        da = res.get("direction_agreement", {})
+        L.append(f"- Tail chosen as direction-matched: **DC1 {res['direction_matched_tail']}**"
+                 + ("" if da.get("criteria_agree", True) else
+                    " — **the two orientation criteria DISAGREE; read both tails as co-primary**")
+                 + f". {res['direction_basis']}")
         rec = res["original_correlation_reconciliation"]
         L.append(f"- Baseline reproducibility: **{rec['status']}** — {rec['note']}")
         L.append("")
@@ -1132,6 +1289,11 @@ def main() -> None:
                         help="Root count; must match the production run (default: 20)")
     parser.add_argument("--n-permutations", type=int, default=1000,
                         help="Permutation shuffles (default: 1000, matching production)")
+    parser.add_argument("--n-random-draws", type=int, default=5,
+                        help="Random-root null draws per section (default: 5). Each "
+                             "draw seeds 20 uniformly-random roots and reports "
+                             "rho vs the original pseudotime, calibrating what the "
+                             "DC1 numbers mean. 0 disables.")
     parser.add_argument("--dc-index", type=int, default=None,
                         help="Force the X_diffmap column used as DC1, bypassing "
                              "trivial-eigenvector detection. Leave unset (default) "
@@ -1176,7 +1338,7 @@ def main() -> None:
         for section, (adata, validation, _) in loaded.items():
             res = run_check_a_for_section(
                 section, adata, validation, args.n_roots, args.n_permutations,
-                args.dc_index,
+                args.dc_index, args.n_random_draws,
             )
             res["_original_pt"] = adata.obs["pseudotime"].values.astype(float)
             check_a[section] = res
@@ -1216,6 +1378,7 @@ def main() -> None:
             "n_roots": args.n_roots,
             "n_permutations": args.n_permutations,
             "dc_index_override": args.dc_index,
+            "n_random_draws": args.n_random_draws,
             "survive_threshold": SURVIVE_THRESHOLD,
             "robust_delta_tolerance": ROBUST_DELTA_TOL,
             "reproduction_tolerance": REPRO_TOL,

@@ -20,10 +20,22 @@
 #   Same 20 roots, same per-root inf-clamping, same median-across-roots
 #   aggregation, same min-max normalisation, same 1000-shuffle permutation null
 #   (the production validation.correlations.permutation_test is imported, not
-#   reimplemented). BOTH DC1 tails are run and reported; the tail whose roots
-#   have the lower mean nuclear_density is labelled direction-matched.
+#   reimplemented). BOTH DC1 tails are run and reported. The direction-matched
+#   tail is labelled from rho(DC1, nuclear_density) over ALL patches (the mean
+#   nuclear_density of just 20 roots is too noisy to orient on); the 20-root mean
+#   is kept as a secondary signal and any disagreement is flagged in the report.
+#   Each tail also reports ROOT PROVENANCE — how many distinct slides the 20 roots
+#   come from. A tail whose roots are >=80% from one slide is a local outlier lobe,
+#   not a manifold endpoint, and its axis is unreliable.
 #   Headline number: Spearman rho between the ORIGINAL and GEOMETRY-SEEDED
-#   pseudotime vectors, per section.
+#   pseudotime vectors, per section, read against the RANDOM-ROOT NULL below.
+#
+# RANDOM-ROOT NULL (calibration, part of Check A):
+#   N_RANDOM_DRAWS sets of 20 uniformly-random roots per section, same aggregation,
+#   reporting rho vs the original pseudotime. Without this there is no scale for
+#   the DC1 numbers: rho=0.52 means one thing if random roots give 0.1 and quite
+#   another if they give 0.5. A DC1 tail that does not exceed the random ceiling
+#   carries no information beyond what any arbitrary root set would give.
 #
 # CHECK C (robustness) — alternative confound covariate:
 #   Re-runs the cellularity confound analysis on the EXISTING, UNCHANGED
@@ -59,7 +71,7 @@
 #   sbatch ~/cancer_trajectory_atlas/jobs/run_root_sensitivity.sh
 
 #SBATCH --account=def-lmarti46
-#SBATCH --time=01:30:00
+#SBATCH --time=03:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --job-name=root_sensitivity
@@ -79,6 +91,7 @@ RUN_DIRS=(
 OUTPUT_DIR="$SCRATCH/results/root_sensitivity"
 N_ROOTS=20
 N_PERMUTATIONS=1000
+N_RANDOM_DRAWS=5
 
 echo "============================================================"
 echo "  Root-selection sensitivity — Checks A and C"
@@ -86,6 +99,7 @@ echo "  Job ID        : ${SLURM_JOB_ID:-local}"
 echo "  Sections      : ${SECTIONS[*]}"
 echo "  Roots per run : $N_ROOTS"
 echo "  Permutations  : $N_PERMUTATIONS"
+echo "  Random draws  : $N_RANDOM_DRAWS  (null baseline for the DC1 numbers)"
 echo "  Output dir    : $OUTPUT_DIR  (NEW — existing runs untouched)"
 echo "============================================================"
 
@@ -132,7 +146,7 @@ python -m cancer_trajectory_atlas.analysis.root_sensitivity \
     --run-dirs        "${RUN_DIRS[@]}" \
     --output-dir      "$OUTPUT_DIR" \
     --n-roots         "$N_ROOTS" \
-    --n-permutations  "$N_PERMUTATIONS"
+    --n-permutations  "$N_PERMUTATIONS"     --n-random-draws  "$N_RANDOM_DRAWS"
 
 echo ""
 echo "============================================================"
