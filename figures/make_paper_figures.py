@@ -347,11 +347,17 @@ def figure7_cellularity(
     for ax, raw, partial, section_label in zip(
         axes, [raw1, raw2], [partial1, partial2], ["2M-1", "2M-2"]
     ):
-        # NaN partial_rho (denominator collapse) rendered as zero bar
-        rvals = [raw[f] if np.isfinite(raw[f]) else 0.0 for f in NON_DENSITY_FEATURES]
-        pvals = [partial[f] if np.isfinite(partial[f]) else 0.0 for f in NON_DENSITY_FEATURES]
+        # A non-finite rho means the correlation could not be COMPUTED. Drawing it
+        # as 0.0 made it visually identical to "measured, no effect" — a wrong
+        # claim in a manuscript figure. Leave the bar absent and mark the slot.
+        rvals = [raw[f] if np.isfinite(raw[f]) else np.nan for f in NON_DENSITY_FEATURES]
+        pvals = [partial[f] if np.isfinite(partial[f]) else np.nan for f in NON_DENSITY_FEATURES]
         ax.bar(x - w / 2, rvals, w, color=RAW_BAR_COLOR, zorder=3)
         ax.bar(x + w / 2, pvals, w, color=PARTIAL_BAR_COLOR, zorder=3)
+        for xi, (rv, pv) in enumerate(zip(rvals, pvals)):
+            if not np.isfinite(rv) or not np.isfinite(pv):
+                ax.text(x[xi], 0, "n/a", ha="center", va="center",
+                        fontsize=TICK_FS - 1, color="0.35", zorder=4)
         ax.axhline(0, color="0.2", linewidth=0.8, zorder=2)
         ax.set_xticks(x)
         ax.set_xticklabels(feat_labels, fontsize=TICK_FS)

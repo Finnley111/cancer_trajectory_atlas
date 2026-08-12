@@ -192,8 +192,16 @@ def run_full_validation(
     coords: np.ndarray,
     n_permutations: int = 1000,
     roi_polygon=None,
+    verdict_features: Optional[List[str]] = None,
 ) -> Dict:
-    """Run the full validation suite and return a results dictionary."""
+    """Run the full validation suite and return a results dictionary.
+
+    verdict_features: which features count toward the headline verdict. Defaults
+    to all of them. The pipeline passes an explicit list so that alternative
+    definitions of the same quantity — h_intensity and h_intensity_wholepatch —
+    are both REPORTED but only one is COUNTED; otherwise a single feature votes
+    twice and can push the verdict from CAUTIOUS to POSITIVE on its own.
+    """
     print("\n" + "=" * 60)
     print("VALIDATION SUITE")
     print("=" * 60)
@@ -203,9 +211,23 @@ def run_full_validation(
     cluster_order = cluster_ordering_analysis(pseudotime, cluster_labels)
     spatial = spatial_depth_correlation(pseudotime, coords, roi_polygon)
 
-    # Overall interpretation
-    n_strong = sum(1 for v in correlations.values() if abs(v.get("rho", 0)) > 0.4)
-    n_sig = sum(1 for v in perm_results.values() if v.get("significant", False))
+    counted = list(morph_features.keys()) if verdict_features is None else [
+        f for f in verdict_features if f in correlations
+    ]
+
+    # Overall interpretation. np.isfinite guards are explicit: abs(nan) > 0.4 is
+    # False, so without them a feature that could not be computed would be
+    # silently counted as "measured, weak" rather than excluded.
+    n_strong = sum(1 for f in counted
+                   if np.isfinite(correlations[f].get("rho", np.nan))
+                   and abs(correlations[f]["rho"]) > 0.4)
+    n_sig = sum(1 for f in counted if perm_results.get(f, {}).get("significant", False))
+    n_uncomputable = sum(1 for f in counted
+                         if not np.isfinite(correlations[f].get("rho", np.nan)))
+    if n_uncomputable:
+        print(f"\n  NOTE: {n_uncomputable} of {len(counted)} counted feature(s) had "
+              "a non-finite correlation and were EXCLUDED from the verdict, not "
+              "counted as weak.")
 
     if n_strong >= 2 and n_sig >= 2:
         verdict = ("POSITIVE: Multiple features show strong, significant correlation "
@@ -228,6 +250,8 @@ def run_full_validation(
         "summary": {
             "n_strong_correlations": n_strong,
             "n_significant_permutations": n_sig,
+            "n_uncomputable_correlations": n_uncomputable,
+            "features_counted_toward_verdict": counted,
             "verdict": verdict,
         },
     }

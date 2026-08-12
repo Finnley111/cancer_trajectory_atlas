@@ -30,15 +30,30 @@ ALL_OTHER_FEATURES = [
 
 
 def compute_cellularity_proxy(obs_df):
-    """First PC of the three nuclear features (scaled). Returns (proxy, pc1_variance_explained)."""
+    """First PC of the three nuclear features (scaled). Returns (proxy, pc1_variance_explained).
+
+    NaN-safe. Morphological features may legitimately be nan (failed extraction,
+    empty nuclear mask), and the previous implementation propagated that straight
+    into sklearn: X.mean/X.std return nan, `sd[sd == 0] = 1.0` does not catch nan
+    because nan != 0, and PCA.fit_transform then raises "Input contains NaN".
+    Rows with any non-finite feature are now dropped from the fit and their proxy
+    value returned as nan, so downstream correlations exclude them by isfinite.
+    """
     X = obs_df[CELLULARITY_FEATURES].values.astype(float)
-    mu = X.mean(axis=0)
-    sd = X.std(axis=0)
-    sd[sd == 0] = 1.0
-    X_scaled = (X - mu) / sd
+    ok = np.isfinite(X).all(axis=1)
+    proxy = np.full(len(X), np.nan, dtype=float)
+
+    if ok.sum() < 3:
+        return proxy, float("nan")
+
+    Xo = X[ok]
+    mu = Xo.mean(axis=0)
+    sd = Xo.std(axis=0)
+    sd[~np.isfinite(sd) | (sd == 0)] = 1.0
+    X_scaled = (Xo - mu) / sd
 
     pca = SklearnPCA(n_components=1)
-    proxy = pca.fit_transform(X_scaled)[:, 0]
+    proxy[ok] = pca.fit_transform(X_scaled)[:, 0]
 
     # Orient so that higher proxy = denser cellularity (nuclear_density loads positively)
     if pca.components_[0, 0] < 0:
@@ -47,11 +62,53 @@ def compute_cellularity_proxy(obs_df):
     return proxy, float(pca.explained_variance_ratio_[0])
 
 
+def _rho(x: np.ndarray, y: np.ndarray) -> float:
+    """Spearman on the pairwise-complete subset. Returns nan if too few points.
+
+    Every correlation in this module goes through here. Bare spearmanr() with
+    nan_policy='propagate' returns nan without complaint, which then flows into
+    reported numbers and — at the survive/collapse gate — is silently read as
+    "collapses".
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    if valid.sum() < 10:
+        return float("nan")
+    return float(spearmanr(x[valid], y[valid]).statistic)
+
+
+def _rho_p(x: np.ndarray, y: np.ndarray):
+    """As _rho, but returns (rho, p_value) and the pairwise-complete n."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    if valid.sum() < 10:
+        return float("nan"), float("nan"), int(valid.sum())
+    r = spearmanr(x[valid], y[valid])
+    return float(r.statistic), float(r.pvalue), int(valid.sum())
+
+
 def compute_residual_pseudotime(pseudotime, cellularity_proxy):
-    """OLS residuals of pseudotime ~ cellularity_proxy."""
-    X = np.column_stack([np.ones(len(cellularity_proxy)), cellularity_proxy])
-    coeffs, _, _, _ = np.linalg.lstsq(X, pseudotime, rcond=None)
-    return pseudotime - X @ coeffs
+    """OLS residuals of pseudotime ~ cellularity_proxy.
+
+    NaN-safe: the fit uses only rows where both are finite, and rows that were
+    excluded get a nan residual. Previously a single nan in the proxy made
+    np.linalg.lstsq return nan coefficients WITHOUT error, so every residual
+    became nan and every downstream correlation silently returned nan.
+    """
+    pseudotime = np.asarray(pseudotime, dtype=float)
+    cellularity_proxy = np.asarray(cellularity_proxy, dtype=float)
+
+    ok = np.isfinite(pseudotime) & np.isfinite(cellularity_proxy)
+    resid = np.full(len(pseudotime), np.nan, dtype=float)
+    if ok.sum() < 3:
+        return resid
+
+    X = np.column_stack([np.ones(ok.sum()), cellularity_proxy[ok]])
+    coeffs, _, _, _ = np.linalg.lstsq(X, pseudotime[ok], rcond=None)
+    resid[ok] = pseudotime[ok] - X @ coeffs
+    return resid
 
 
 def analyze_run(results_dir: Path, output_dir: Path):
@@ -79,11 +136,12 @@ def analyze_run(results_dir: Path, output_dir: Path):
     proxy, pc1_var = compute_cellularity_proxy(obs)
     residuals = compute_residual_pseudotime(pseudotime, proxy)
 
-    rho_cell, p_cell = spearmanr(pseudotime, proxy)
+    rho_cell, p_cell, n_cell = _rho_p(pseudotime, proxy)
 
     row = {
         "run": results_dir.name,
         "n_patches": len(obs),
+        "n_complete_cellularity": n_cell,
         "rho_cellularity": rho_cell,
         "p_cellularity": p_cell,
         "pc1_var_explained": pc1_var,
@@ -92,12 +150,16 @@ def analyze_run(results_dir: Path, output_dir: Path):
     for feat in OTHER_FEATURES:
         if feat in obs.columns:
             vals = obs[feat].values.astype(float)
-            rho_full, p_full   = spearmanr(pseudotime, vals)
-            rho_resid, p_resid = spearmanr(residuals,  vals)
+            rho_full, p_full, n_full    = _rho_p(pseudotime, vals)
+            rho_resid, p_resid, n_resid = _rho_p(residuals,  vals)
             row[f"rho_{feat}_full"]     = rho_full
             row[f"rho_{feat}_residual"] = rho_resid
             row[f"p_{feat}_full"]       = p_full
             row[f"p_{feat}_residual"]   = p_resid
+            # n differs between the two when the feature or the proxy has nan;
+            # recording it prevents a silent apples-to-oranges comparison.
+            row[f"n_{feat}_full"]       = n_full
+            row[f"n_{feat}_residual"]   = n_resid
 
     # Scatter: cellularity proxy vs pseudotime
     try:
@@ -179,13 +241,21 @@ def analyze_run_nuclear_density(results_dir: Path, n_permutations: int = 1000) -
     pt = obs["pseudotime"].values.astype(float)
     nd = obs["nuclear_density"].values.astype(float)
 
+    n_nan_nd = int((~np.isfinite(nd)).sum())
+    if n_nan_nd:
+        print(f"  NOTE: nuclear_density has {n_nan_nd} non-finite value(s); all "
+              "correlations below use the pairwise-complete subset.")
+
     # Zero-order: how much does pseudotime track nuclear_density?
-    rho_pt_nd = float(spearmanr(pt, nd).statistic)
+    rho_pt_nd = _rho(pt, nd)
     print(f"  rho(pseudotime, nuclear_density) = {rho_pt_nd:+.3f}")
 
-    # Precompute rho(feature, nuclear_density) — constant across permutations
+    # Precompute rho(feature, nuclear_density) — constant across permutations.
+    # This MUST be nan-safe: nuclear_density is the control variable, so a single
+    # nan here propagates into rho_yz for EVERY feature, makes every permutation
+    # draw nan, empties the null, and destroys all five perm_p values at once.
     rho_feat_nd = {
-        feat: float(spearmanr(obs[feat].values.astype(float), nd).statistic)
+        feat: _rho(obs[feat].values.astype(float), nd)
         for feat in ALL_OTHER_FEATURES
     }
 
@@ -204,6 +274,9 @@ def analyze_run_nuclear_density(results_dir: Path, n_permutations: int = 1000) -
             rho_xy = float(spearmanr(pt_shuf[valid], fvals[valid]).statistic)
             rho_xz = float(spearmanr(pt_shuf[valid], nd[valid]).statistic)
             rho_yz = rho_feat_nd[feat]
+            if not np.isfinite(rho_yz):
+                perm_nulls[feat].append(float("nan"))
+                continue
             denom = np.sqrt((1 - rho_xz ** 2) * (1 - rho_yz ** 2))
             pnull = float((rho_xy - rho_xz * rho_yz) / denom) if denom >= 1e-10 else float("nan")
             perm_nulls[feat].append(pnull)
@@ -216,18 +289,30 @@ def analyze_run_nuclear_density(results_dir: Path, n_permutations: int = 1000) -
     print(f"\n  {'Feature':<26s}  {'raw_rho':>8s}  {'partial_rho':>11s}  {'delta':>7s}  {'perm_p':>7s}  Status")
     print("  " + "-" * 78)
 
+    uncomputable = []
+
     for feat in ALL_OTHER_FEATURES:
         fvals = obs[feat].values.astype(float)
-        raw_rho = float(spearmanr(pt, fvals).statistic)
+        n_complete = int((np.isfinite(pt) & np.isfinite(fvals) & np.isfinite(nd)).sum())
+        raw_rho = _rho(pt, fvals)
         prho = partial_spearman(pt, fvals, nd)
         delta = prho - raw_rho if not (np.isnan(prho) or np.isnan(raw_rho)) else float("nan")
         nulls = np.array([v for v in perm_nulls[feat] if not np.isnan(v)])
-        perm_p = float(np.mean(np.abs(nulls) >= abs(prho))) if len(nulls) > 0 else float("nan")
+        perm_p = (float(np.mean(np.abs(nulls) >= abs(prho)))
+                  if len(nulls) > 0 and np.isfinite(prho) else float("nan"))
 
-        status = "SURVIVES" if abs(prho) >= 0.1 else "collapses"
-        if abs(prho) >= 0.1:
+        # A non-finite partial rho means the test could not be RUN, which is not
+        # the same as the signal collapsing. `abs(nan) >= 0.1` is False, so the
+        # old gate silently filed uncomputable features under "collapses" — a
+        # reported verdict with nothing behind it.
+        if not np.isfinite(prho):
+            status = "UNCOMPUTABLE"
+            uncomputable.append(feat)
+        elif abs(prho) >= 0.1:
+            status = "SURVIVES"
             survivors.append(feat)
         else:
+            status = "collapses"
             collapses.append(feat)
 
         feature_results[feat] = {
@@ -235,19 +320,25 @@ def analyze_run_nuclear_density(results_dir: Path, n_permutations: int = 1000) -
             "partial_rho": prho,
             "delta": delta,
             "partial_perm_p": perm_p,
+            "n_complete": n_complete,
+            "n_null_draws_usable": int(len(nulls)),
+            "status": status,
         }
-        print(f"  {feat:<26s}  {raw_rho:>+8.3f}  {prho:>+11.3f}  {delta:>+7.3f}  {perm_p:>7.4f}  {status}")
+        print(f"  {feat:<26s}  {raw_rho:>+8.3f}  {prho:>+11.3f}  {delta:>+7.3f}  "
+              f"{perm_p:>7.4f}  {status}")
 
     output = {
         "run": results_dir.name,
         "control_feature": "nuclear_density",
         "rho_pt_vs_control": rho_pt_nd,
         "n_patches": int(len(pt)),
+        "n_nonfinite_nuclear_density": n_nan_nd,
         "n_permutations": n_permutations,
         "features": feature_results,
         "summary": {
             "survivors": survivors,
             "collapses": collapses,
+            "uncomputable": uncomputable,
         },
     }
 
@@ -255,9 +346,10 @@ def analyze_run_nuclear_density(results_dir: Path, n_permutations: int = 1000) -
     out_dir.mkdir(parents=True, exist_ok=True)
 
     json_path = out_dir / "cellularity_confound.json"
-    with open(json_path, "w") as f:
-        import json as _json
-        _json.dump(output, f, indent=2)
+    # Non-finite floats -> null. json.dump defaults to allow_nan=True, which emits
+    # bare NaN tokens that are invalid JSON and rejected by jq / JavaScript.
+    from ..utils.io import save_json
+    save_json(output, json_path)
     print(f"\n  Saved: {json_path}")
 
     # Grouped bar figure: raw vs partial rho per feature
@@ -295,7 +387,11 @@ def analyze_run_nuclear_density(results_dir: Path, n_permutations: int = 1000) -
         print(f"  WARNING: Could not save figure: {exc}")
 
     print(f"\n  SUMMARY [{results_dir.name}]: "
-          f"survives={survivors or 'none'}, collapses={collapses or 'none'}")
+          f"survives={survivors or 'none'}, collapses={collapses or 'none'}, "
+          f"uncomputable={uncomputable or 'none'}")
+    if uncomputable:
+        print("  WARNING: uncomputable features are NOT collapses — the test could "
+              "not be run for them. Do not report them as negative results.")
     return output
 
 

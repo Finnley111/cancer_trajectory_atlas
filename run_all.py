@@ -561,7 +561,9 @@ def run_pipeline(cfg: PipelineConfig):
     from .validation.morphological_features import compute_nuclear_density_quick
     print(f"  Computing nuclear density for {cfg.n_roots}-root DPT candidate selection...")
     t_nd = time.time()
-    nuclear_density_quick = compute_nuclear_density_quick(all_patches)
+    nuclear_density_quick, nd_diag = compute_nuclear_density_quick(
+        all_patches, return_diagnostics=True,
+    )
     print(f"  Nuclear density done: {time.time() - t_nd:.1f}s")
     compute_dpt_multi_root(adata, nuclear_density_quick, n_roots=cfg.n_roots)
 
@@ -589,16 +591,44 @@ def run_pipeline(cfg: PipelineConfig):
     print("PHASE 5: Morphological Feature Validation")
     print(f"{'='*60}")
 
-    morph_features = compute_morphological_features(
-        all_patches, use_stardist=cfg.use_stardist,
+    morph_features, morph_diag = compute_morphological_features(
+        all_patches, use_stardist=cfg.use_stardist, return_diagnostics=True,
     )
 
     for name, values in morph_features.items():
         adata.obs[name] = values
 
+    # Persist extraction failures. Without this the failure rate is unknowable
+    # after the fact, and a nan feature cannot be told apart from a feature that
+    # was measured and happened to be missing for a legitimate reason.
+    feature_failures = {
+        "nuclear_density_quick": nd_diag,
+        "morphological_features": morph_diag,
+        "note": (
+            "nan means NOT MEASURED, never 0.0. Root selection excludes non-finite "
+            "densities explicitly (analysis/diffusion.py); correlations exclude nan "
+            "via np.isfinite in validation/correlations.py."
+        ),
+    }
+    io.save_json(feature_failures, output_dir / "feature_failures.json")
+    print(f"  Feature failures: {output_dir / 'feature_failures.json'}")
+
+    total_failed = nd_diag["n_failed"] + morph_diag["n_failed"]
+    if total_failed == 0:
+        print("  No patch failed feature extraction in either pass.")
+    else:
+        print(f"  WARNING: {total_failed} extraction failure(s) across both passes "
+              "— see feature_failures.json.")
+
     validation = run_full_validation(
         pseudotime, morph_features, cluster_labels, all_coords,
         n_permutations=cfg.n_permutations,
+        # h_intensity_wholepatch is the legacy definition of h_intensity, kept for
+        # comparison. Both are reported; only the masked one votes on the verdict.
+        verdict_features=[
+            "nuclear_density", "mean_nuclear_area", "nc_ratio",
+            "texture_entropy", "h_intensity", "packing_irregularity",
+        ],
     )
 
     viz.plot_feature_vs_pseudotime(

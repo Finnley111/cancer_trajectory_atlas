@@ -161,12 +161,39 @@ def compute_dpt_multi_root(
     import scanpy as sc
 
     n_patches = len(adata)
-    n_roots = min(n_roots, n_patches)
-    root_candidates = np.argsort(nuclear_density)[:n_roots].tolist()
+
+    # Root candidates must come from patches whose density was actually MEASURED.
+    # nan means extraction failed (validation/morphological_features.py); such a
+    # patch has no density, so it cannot be "the least cellular". np.argsort does
+    # place nan last, which happens to give the right answer here, but relying on
+    # that is implicit and silently breaks if the sort or dtype ever changes —
+    # and the cost of being wrong is that the pseudotime ORIGIN is anchored on
+    # whichever patches crashed the segmenter. So mask explicitly.
+    finite = np.isfinite(nuclear_density)
+    n_excluded = int((~finite).sum())
+    if n_excluded:
+        print(f"  Excluding {n_excluded} patch(es) with non-finite nuclear density "
+              "from root candidates (failed extraction).")
+    finite_idx = np.flatnonzero(finite)
+    if finite_idx.size == 0:
+        raise ValueError(
+            "No patch has a finite nuclear density — every extraction failed, so "
+            "DPT roots cannot be selected. Check the feature-extraction log."
+        )
+
+    n_roots = min(n_roots, finite_idx.size)
+    order = finite_idx[np.argsort(nuclear_density[finite_idx])]
+    root_candidates = order[:n_roots].tolist()
 
     print(f"  Multi-root DPT: {n_roots} root candidates "
           f"(nuclear density range [{nuclear_density[root_candidates].min():.4f}, "
           f"{nuclear_density[root_candidates[-1]]:.4f}])")
+
+    # Persist the roots. Without this, the root set cannot be recovered from the
+    # run afterwards — it has to be re-derived from a rule applied to a different
+    # array than the one actually used, which is not verifiable.
+    adata.uns["dpt_root_candidates"] = np.asarray(root_candidates, dtype=np.int64)
+    adata.uns["dpt_n_roots_excluded_nonfinite"] = n_excluded
 
     pt_matrix = np.zeros((n_roots, n_patches), dtype=np.float64)
 

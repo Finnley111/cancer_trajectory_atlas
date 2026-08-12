@@ -27,14 +27,24 @@ def load_pickle(path: str) -> Any:
 
 
 def save_json(data: Dict, path: str):
-    """Save dict to JSON, converting numpy types automatically."""
+    """Save dict to JSON, converting numpy types automatically.
+
+    Non-finite floats become null. json.dump defaults to allow_nan=True, which
+    emits bare NaN / Infinity tokens: Python reads those back happily, but they
+    are NOT valid JSON, so jq, JavaScript and every strict parser reject the
+    file. Since features can now legitimately be nan, that would silently produce
+    unreadable artifacts. null round-trips to None, which is explicit and valid.
+    """
     def _convert(obj):
         if isinstance(obj, np.integer):
             return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
+        if isinstance(obj, (np.floating, float)):
+            v = float(obj)
+            return v if np.isfinite(v) else None
+        if isinstance(obj, np.bool_):
+            return bool(obj)
         if isinstance(obj, np.ndarray):
-            return obj.tolist()
+            return _convert(obj.tolist())
         if isinstance(obj, dict):
             return {str(k) if isinstance(k, np.integer) else k: _convert(v) for k, v in obj.items()}
         if isinstance(obj, (list, tuple)):
@@ -42,7 +52,9 @@ def save_json(data: Dict, path: str):
         return obj
 
     with open(path, "w") as f:
-        json.dump(_convert(data), f, indent=2)
+        # allow_nan=False so any non-finite that slips past _convert raises
+        # loudly instead of writing an invalid file.
+        json.dump(_convert(data), f, indent=2, allow_nan=False)
 
 
 def load_json(path: str) -> Dict:
