@@ -1,3 +1,40 @@
+"""Convert QuPath GeoJSON annotations to ratio-coordinate JSON.
+
+This is the producer of ``data/annotations_ratio/``, which is what the pipeline
+actually consumes. It is a manual, one-off tool: it takes no arguments and uses
+hardcoded relative paths, so it MUST be run from the repository root.
+
+    cd ~/cancer_trajectory_atlas && python converters/batch_convert.py
+
+Inputs
+------
+``./data/annotations/*.geojson``
+    QuPath exports, in absolute full-NDPI pixel coordinates.
+``./converters/img_dims.txt``
+    Per-slide full-NDPI level-0 dimensions, one ``<slide-id>: w=W h=H`` per line.
+
+Output
+------
+``./data/annotations_ratio/*.json``
+    Same FeatureCollection structure, every coordinate divided by (W, H) and
+    rounded to 6 decimals, i.e. ratios in [0, 1] relative to the FULL NDPI width
+    (which includes both side-by-side slide copies). Left-half annotations
+    therefore have x in [0, 0.5]. See ``features/patching.py:load_roi_polygons``
+    for how that is mapped back to cropped-PNG pixel space.
+
+Round-trip invariant
+--------------------
+This script divides by ``converters/img_dims.txt``; the pipeline multiplies by
+``original_full_width`` from ``slide_dimensions.json`` (written by ``run_all.py
+--convert``) or, as a fallback, ``data/slide_registry.py:KNOWN_NDPI_DIMENSIONS``.
+Verified 2026-08-12: ``img_dims.txt`` and ``KNOWN_NDPI_DIMENSIONS`` hold the same
+16 keys with identical values, so the round trip is exact and the two sources are
+interchangeable. If a slide is ever added, it must be added to BOTH.
+
+Do not archive this file. It is the only in-repo record of how the ratio
+annotations were generated, and it is part of the raw-data-to-results path.
+"""
+
 import json
 import os
 import re
