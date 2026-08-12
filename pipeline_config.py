@@ -76,11 +76,30 @@ class PipelineConfig:
     # 0.5 = drop patches where more than half the area is outside the annotation.
     min_roi_coverage: Optional[float] = None
 
-    # Root cluster for diffusion pseudotime (informational; unused with multi-root DPT).
+    # ── VESTIGIAL: root_cluster and root_metric are NO-OPS ────────────────────
+    # Both are populated by run_all.py from --root-cluster / --root-metric and
+    # then never read. Nothing on the --run path consumes either field; verified
+    # by grep for `cfg.root_cluster` / `cfg.root_metric` (Phase 5, 2026-08-12).
+    #
+    # They predate multi-root DPT. Single-root DPT chose its origin as the patch
+    # nearest a named cluster's centroid; compute_dpt_multi_root replaced that
+    # with a fixed rule (lowest measured nuclear density), so neither field has
+    # anything left to control. Setting them changes nothing about any output.
+    #
+    # Kept rather than removed so existing command lines and notes keep working.
+    # Safe to delete once nothing references the flags — but note that
+    # run_individual.py has its OWN, LIVE --root-cluster backed by
+    # IndividualConfig.root_cluster. That one is real and must not be touched.
+    # NOTE: field order below is deliberate and must not be rearranged — these
+    # are dataclass fields, so their order defines PipelineConfig's positional
+    # __init__ signature.
     root_cluster: Optional[str] = None
 
-    # Multi-root DPT parameters.
-    # n_roots candidates are the n lowest-cellularity patches; DPT is run once
-    # per candidate and the results are median-aggregated.
+    # Multi-root DPT. n_roots candidates are the n patches with the lowest
+    # MEASURED nuclear density (non-finite densities are excluded first); DPT is
+    # run once per candidate and the per-patch results are median-aggregated.
+    # This is the only root parameter that does anything.
     n_roots: int = 20
+
+    # (vestigial — see the block above)
     root_metric: str = "cellularity"

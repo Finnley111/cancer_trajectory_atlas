@@ -128,11 +128,20 @@ def compute_dpt(
     """
     Compute Diffusion Pseudotime from a biologically anchored root.
 
+    SINGLE-ROOT PATH — used by run_individual.py ONLY. The atlas pipeline
+    (run_all.py) does not call this; it uses compute_dpt_multi_root, which picks
+    roots by nuclear density and median-aggregates over 20 of them. Do not
+    "unify" the two: per-slide runs deliberately anchor on a cluster because a
+    single slide has no cohort to rank densities against.
+
     Either specify root_cluster (recommended — will auto-select the centroid
     patch) or root_index (if you already know which patch to use).
 
     Results stored in adata.obs['dpt_pseudotime'] and adata.obs['pseudotime']
-    (the latter normalized to [0, 1]).
+    (the latter normalized to [0, 1]). Note this writes 'dpt_pseudotime' whereas
+    compute_dpt_multi_root does not, and it does NOT write 'pseudotime_std'.
+
+    Infinite DPT values are clamped to the maximum finite value with a warning.
     """
     _require_scanpy()
     import scanpy as sc # dynamic import
@@ -184,6 +193,41 @@ def compute_dpt_multi_root(
     Uncertainty = std(pt_matrix, axis=0), stored as pseudotime_std (un-normalized).
 
     Results stored in adata.obs['pseudotime'] and adata.obs['pseudotime_std'].
+
+    The root rule, stated exactly
+    -----------------------------
+    Non-finite densities are masked out FIRST, then the surviving indices are
+    sorted by density and the lowest ``n_roots`` are taken::
+
+        finite_idx = flatnonzero(isfinite(nuclear_density))
+        roots      = finite_idx[argsort(nuclear_density[finite_idx])][:n_roots]
+
+    This is NOT the same as ``argsort(nuclear_density)[:n_roots]``. The two agree
+    only when every patch has a measured density. Several analysis and diagnostic
+    modules quote the simpler form when re-deriving the root set — it happened to
+    be correct for runs with zero extraction failures, but it is not the rule.
+
+    Anything needing the true root set should read ``adata.uns[...]`` rather than
+    re-deriving it; see below.
+
+    What is persisted
+    -----------------
+    ``adata.uns['dpt_root_candidates']``          int64 array, the actual roots used
+    ``adata.uns['dpt_n_roots_excluded_nonfinite']`` count of patches masked out
+
+    Persisting the roots is load-bearing, not a convenience: without it the root
+    set can only be reconstructed by applying a rule to a density array that may
+    not be the one the run actually used, which is unverifiable after the fact.
+    Do not remove these writes.
+
+    Note ``n_roots`` is silently clamped to the number of finite-density patches,
+    so the realised root count can be lower than requested. Read
+    ``len(adata.uns['dpt_root_candidates'])`` for the true count rather than
+    assuming the CLI value.
+
+    Infinite DPT values (disconnected manifold) are clamped per-root to that
+    root's maximum finite value BEFORE aggregation, so a partially disconnected
+    graph biases the median rather than propagating inf.
     """
     _require_scanpy()
     import scanpy as sc
@@ -311,23 +355,7 @@ def compute_paga_topology(
     return n_components, adata
 
 
-# ── Convenience wrapper ──────────────────────────────────────────────
-
-def run_diffusion_pseudotime(
-    X_pca: np.ndarray,
-    cluster_labels: np.ndarray,
-    slide_ids: np.ndarray,
-    root_cluster: str,
-    X_umap: Optional[np.ndarray] = None,
-    n_neighbors: int = 30,
-    n_comps: int = 10,
-) -> "ad.AnnData":
-    """
-    Full Phase 4 pipeline: build AnnData → diffusion map → DPT.
-
-    Returns the fully populated AnnData object.
-    """
-    adata = build_adata(X_pca, cluster_labels, slide_ids, X_umap)
-    compute_diffusion_map(adata, n_neighbors=n_neighbors, n_comps=n_comps)
-    compute_dpt(adata, root_cluster=root_cluster)
-    return adata
+# The single-root convenience wrapper `run_diffusion_pseudotime` lived here until
+# Phase 5 (2026-08-12). It was dead: its only caller was run_train_test.py, which
+# was deleted before this cleanup began. Moved verbatim to
+# archive/analysis/diffusion_run_diffusion_pseudotime.py.

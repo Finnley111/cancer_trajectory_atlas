@@ -854,14 +854,23 @@ Examples:
                              "(3x3 grid check). Default: None (centre-point only). "
                              "Use 0.5 to drop boundary patches that are mostly outside the annotation.")
     parser.add_argument("--root-cluster", type=int, default=None,
-                        help="Legacy arg; unused with multi-root DPT.")
+                        help="VESTIGIAL NO-OP — accepted but never read. Predates "
+                             "multi-root DPT, which picks roots by nuclear density "
+                             "rather than by cluster. Passing it changes nothing. "
+                             "(Not to be confused with run_individual.py's "
+                             "--root-cluster, which IS live.)")
     parser.add_argument("--n-roots", type=int, default=20,
                         help="Number of root candidates for multi-root DPT averaging. "
-                             "Candidates are the n patches with lowest nuclear density. "
-                             "(default: 20)")
+                             "Candidates are the n patches with the lowest MEASURED "
+                             "nuclear density; patches whose density failed to extract "
+                             "are excluded first. This is the only root flag with an "
+                             "effect. (default: 20)")
     parser.add_argument("--root-metric", type=str, default="cellularity",
                         choices=["cellularity"],
-                        help="Metric used to rank root candidates. (default: cellularity)")
+                        help="VESTIGIAL NO-OP — accepted but never read. The root "
+                             "ranking metric is hardcoded to nuclear density in "
+                             "analysis/diffusion.py:compute_dpt_multi_root; this flag "
+                             "cannot change it. (default: cellularity)")
 
     args = parser.parse_args()
 

@@ -36,3 +36,22 @@ tree, and its invocation is now documented in `NOTES.md` → *Annotation directo
 **Dangling reference cleaned up:** `jobs/submit_new_annotations_all.sh` listed this
 script as a prerequisite ("run submit_annotation_check.sh first"). That comment now
 points at `converters/batch_convert.py` instead.
+
+### `analysis/diffusion_run_diffusion_pseudotime.py` — archived 2026-08-12, Phase 5
+
+The `run_diffusion_pseudotime` function, extracted verbatim from
+`analysis/diffusion.py`. A single-root convenience wrapper chaining
+`build_adata` → `compute_diffusion_map` → `compute_dpt`.
+
+**Why archived:** dead. Its only caller was the top-level `run_train_test.py`,
+deleted before this cleanup began — the sole surviving reference anywhere in the repo
+was a stale `__pycache__/run_train_test.cpython-310.pyc` still holding the symbol name.
+Zero callers in any `.py`, `.sh`, or `.md`.
+
+**Superseded by:** `compute_dpt_multi_root`, which the atlas pipeline uses — 20
+density-ranked roots, median-aggregated, rather than one cluster-anchored root.
+
+**Not importable as-is.** It is a verbatim record so the removal stays reversible; to
+restore it, paste the function back into `analysis/diffusion.py`. The three functions
+it calls are all still there. Removing it changed no behaviour: `analysis/diffusion.py`
+is otherwise byte-identical, verified by AST comparison.
