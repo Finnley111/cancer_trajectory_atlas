@@ -27,6 +27,34 @@ MISSING-VALUE CONVENTION
     does mean zero nuclear area and zero nuclear fraction. compute_hematoxylin_
     intensity does NOT, because the mean of an empty selection is undefined
     rather than zero.
+
+    Two further non-nan returns exist and are NOT exceptions to the convention,
+    because both are unreachable or self-excluding in practice:
+      * compute_nuclear_density returns 0.0 when patch_area <= 0. patch_area is
+        patch_size**2 (12544), so this cannot fire from the pipeline.
+      * compute_nc_ratio returns +inf when a mask covers 100% of the patch
+        (zero cytoplasm pixels). np.isfinite(inf) is False, so such a patch is
+        excluded by the same filters that exclude nan — the convention holds
+        even though the sentinel differs.
+
+DIAGNOSTIC ARITHMETIC HAS A KNOWN EDGE CASE
+    compute_morphological_features derives two reported counts by subtraction:
+        n_empty_mask = nan_counts["h_intensity"]          - n_failed
+        n_lt3_nuclei = nan_counts["packing_irregularity"] - n_failed
+    This assumes a failed patch contributes a nan to EVERY feature, which holds
+    only when the exception is raised at or before nuclear segmentation. Features
+    are assigned incrementally inside one try block and texture_entropy is
+    computed LAST, so a patch that succeeds through packing_irregularity and then
+    dies in rgb2gray/compute_texture_entropy keeps six real values while still
+    incrementing n_failed. Both subtractions are then understated and can go
+    NEGATIVE.
+
+    The FEATURE VALUES are correct in that case — partial results are genuinely
+    valid and are deliberately kept. Only the two derived counts in the printout
+    and in feature_failures.json are affected. With n_failed == 0 (every run to
+    date, including per_section_v2) the arithmetic is exact. Left as-is because
+    changing it would change feature_failures.json's contents; see reports/
+    codebase_inventory.md.
 """
 
 import numpy as np

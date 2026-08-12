@@ -396,6 +396,30 @@ def analyze_run_nuclear_density(results_dir: Path, n_permutations: int = 1000) -
 
 
 def _decision_gate(rho):
+    """Map rho(pseudotime, cellularity_proxy) to an Experiment-3 recommendation.
+
+    TWO CAVEATS — this is the one place in this module that does NOT use abs()
+    or an isfinite guard, unlike _rho, _rho_p and the survive/collapse gate at
+    line ~311. Both caveats are print-only: main() writes this string to stdout
+    and nothing persists it, so no stored result or JSON is affected.
+
+    1. SIGN. The comparisons are on the raw signed rho. DPT's direction is
+       arbitrary (see analysis/sign_flip_check.py), so an equally strong but
+       inverted relationship lands in the wrong bucket:
+           rho = +0.8  -> "RECONSIDER — mainly a cellularity meter"
+           rho = -0.8  -> "SKIP — pseudotime barely tracks cellularity"
+       Those are the same finding with the pseudotime axis flipped. Read the
+       magnitude yourself before acting on the recommendation.
+
+    2. NaN. `nan < 0.3` and `nan > 0.7` are both False, so an uncomputable rho
+       falls through to "RUN Exp 3 — partial confounding", i.e. a missing
+       measurement is reported as an intermediate result. This is exactly the
+       failure mode _rho's docstring warns about, and this function predates
+       that hardening.
+
+    Left unchanged: the thresholds and their exact strings are what every prior
+    run reported, and Phase 8 compares cellularity confound verdicts.
+    """
     if rho < 0.3:
         return "SKIP Exp 3 — pseudotime barely tracks cellularity"
     if rho > 0.7:

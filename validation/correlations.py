@@ -59,6 +59,14 @@ def permutation_test(
     Shuffles pseudotime labels n_permutations times and computes null
     distribution of |rho|. Reports empirical p-value.
 
+    The empirical p-value is ``mean(null >= |real_rho|)``, the unbiased-downward
+    form. It can return exactly 0.0, which means "no permutation reached the
+    observed |rho|", NOT "p = 0". With n_permutations=1000 the honest statement
+    for a 0.0 result is p < 1/1000. The add-one form, (1 + count) / (1 + n),
+    would report 0.001 instead; it is not used here and must not be swapped in
+    without re-running every comparison, since it would shift every reported
+    p-value.
+
     Returns:
         {feature_name: {
             "real_rho": float,
@@ -155,7 +163,33 @@ def spatial_depth_correlation(
     coords: np.ndarray,
     roi_polygon=None,
 ) -> Dict:
-    """Secondary check: correlation between pseudotime and spatial depth."""
+    """Secondary check: correlation between pseudotime and spatial depth.
+
+    DO NOT CITE THIS NUMBER WITHOUT READING THIS FIRST.
+
+    ``run_all.py`` never passes ``roi_polygon``, so the fallback branch is the
+    only one that has ever executed. That fallback computes "depth" as the
+    distance from each patch to ``coords.mean(axis=0)`` — the mean of ALL patch
+    coordinates POOLED ACROSS EVERY SLIDE in the run.
+
+    Patch coordinates are per-slide pixel offsets, each slide having its own
+    origin. Averaging them across 8 or 16 slides produces a point that is not
+    located in any slide, and distance-to-that-point is not a depth, an
+    eccentricity, or any other geometric property of the tissue. It mostly
+    reflects how large each slide's cropped PNG is and where its ROIs happen to
+    sit in that frame.
+
+    The value is reported as ``spatial_depth_secondary`` in validation.json and
+    is printed with a "SECONDARY" label. It does NOT feed the verdict
+    (``run_full_validation`` computes the verdict only from
+    ``verdict_features``), so no published conclusion rests on it. It is left
+    unchanged because fixing it would alter validation.json.
+
+    A meaningful version would compute depth per slide, relative to that slide's
+    own ROI boundary — which is what the ``roi_polygon`` branch does, and why it
+    exists. That branch also hardcodes ``coords + 56`` as the patch centre, i.e.
+    half of patch_size=112; it would be wrong for any other patch size.
+    """
     from scipy.spatial.distance import cdist
 
     if roi_polygon is not None:
@@ -201,6 +235,34 @@ def run_full_validation(
     definitions of the same quantity — h_intensity and h_intensity_wholepatch —
     are both REPORTED but only one is COUNTED; otherwise a single feature votes
     twice and can push the verdict from CAUTIOUS to POSITIVE on its own.
+
+    THE VERDICT RULE IS NON-MONOTONIC — know this before quoting it
+    --------------------------------------------------------------
+    The three-way branch is::
+
+        n_strong >= 2 and n_sig >= 2   -> POSITIVE
+        n_strong == 1 or  n_sig == 1   -> CAUTIOUS
+        otherwise                      -> NULL RESULT
+
+    The middle test matches EXACTLY one, not "at least one", so adding evidence
+    can move the verdict backwards::
+
+        n_strong=0, n_sig=1  -> CAUTIOUS
+        n_strong=0, n_sig=2  -> NULL RESULT     (more significance, weaker verdict)
+        n_strong=1, n_sig=0  -> CAUTIOUS
+        n_strong=2, n_sig=0  -> NULL RESULT     (more strong rhos, weaker verdict)
+        n_strong=3, n_sig=0  -> NULL RESULT
+
+    Note also that with several thousand patches, permutation significance is
+    easy to reach at trivial effect sizes, so n_sig is expected to be large and
+    n_strong is the discriminating term in practice.
+
+    This is left exactly as written: every published verdict for this project was
+    produced by this rule, and changing it would silently reinterpret past runs.
+    Treat the verdict string as a coarse label and read
+    ``summary.n_strong_correlations`` / ``summary.n_significant_permutations``
+    for anything that matters. Phase 8's regression compares the verdict string,
+    so it must not change before that run.
     """
     print("\n" + "=" * 60)
     print("VALIDATION SUITE")
