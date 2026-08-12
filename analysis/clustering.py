@@ -1,4 +1,46 @@
-"""Morphological clustering helpers for PCA, UMAP, and graph-based labels."""
+"""Morphological clustering helpers for PCA, UMAP, and graph-based labels.
+
+THREE SEPARATE NEIGHBOUR GRAPHS — read this before comparing them
+=================================================================
+The pipeline builds three independent k-NN graphs over the *same* matrix
+(``X_embed``: PCA output, optionally Harmony/scVI-corrected). They use different
+k AND different metrics, and none of them is derived from another. This has
+caused confusion before, so the full picture:
+
+    consumer          built by                    k    metric      set where
+    ----------------------------------------------------------------------------
+    Leiden clusters   sklearn kneighbors_graph    15   cosine      cluster_leiden
+                      (this file)                                  defaults
+    UMAP (display)    umap.UMAP (this file)       30   cosine      run_umap defaults
+    Diffusion map     scanpy sc.pp.neighbors      30   EUCLIDEAN   compute_diffusion_map
+    -> DPT, PAGA      (analysis/diffusion.py)                      (analysis/diffusion.py)
+
+The k=15/cosine pair for Leiden and the k=30/cosine pair for UMAP are the
+*function defaults* in this module — ``run_all.py`` calls ``cluster(X_embed,
+method=..., resolution=...)`` and ``run_umap(X_embed)`` without passing
+``n_neighbors`` or ``metric``, so the defaults here are the operative values and
+there is no CLI flag that changes them.
+
+The diffusion map's euclidean metric is likewise never chosen explicitly: it is
+scanpy's default, because ``compute_diffusion_map`` calls ``sc.pp.neighbors``
+without a ``metric`` argument. Its k IS configurable, via ``--diffmap-neighbors``.
+
+Consequences worth keeping straight:
+
+* **Clusters and pseudotime describe different geometries.** Cluster identity
+  comes from cosine similarity among 15 nearest neighbours; pseudotime comes from
+  euclidean distance among 30. Two patches can be cluster-mates yet far apart in
+  diffusion space, and vice versa. Neither is wrong; they are different questions.
+* **The PAGA connectivity gate mixes both.** ``compute_paga_topology`` groups by
+  Leiden labels (cosine/k15) but computes connectivity on the diffusion graph
+  (euclidean/k30). "DPT is valid" therefore means the euclidean-k30 manifold is
+  connected *between* cosine-k15 clusters.
+* Changing ``--diffmap-neighbors`` moves the diffusion graph only. Nothing on the
+  CLI moves the Leiden or UMAP graphs.
+
+UMAP is display-only. No clustering, pseudotime, or validation result depends on
+it; it feeds figures and the interactive overlays.
+"""
 
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -34,7 +76,23 @@ def fit_pca(
     variance_target: float = 0.95,
     max_components: int = None,
 ) -> Tuple[StandardScaler, PCA, np.ndarray]:
-    """Standardize features and fit PCA."""
+    """Standardize features and fit PCA.
+
+    ``variance_target`` is passed to sklearn as a float ``n_components``, which
+    selects however many components are needed to reach that cumulative variance.
+    **The output dimensionality is therefore data-dependent**, not fixed: a
+    different slide subset, or a different patch cap, yields a different number
+    of PCA components. Anything comparing two runs component-by-component must
+    check the widths match first.
+
+    ``max_components`` is dead in practice — ``run_all.py`` calls
+    ``fit_pca(features, variance_target=0.95)`` and never supplies it, so the
+    re-fit branch below has never run in any pipeline invocation. It is kept for
+    direct API use.
+
+    ``random_state=42`` is fixed on both PCA fits, so for identical input this is
+    deterministic.
+    """
     print(f"  Standardizing {features.shape[1]}-dim features...")
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(features)
@@ -62,7 +120,20 @@ def run_umap(
     min_dist: float = 0.1,
     metric: str = "cosine",
 ) -> np.ndarray:
-    """Compute a UMAP embedding for visualization."""
+    """Compute a UMAP embedding for visualization.
+
+    DISPLAY ONLY. Nothing downstream reads this embedding: clustering runs on
+    ``X_embed``, and the diffusion map builds its own graph from ``X_embed`` too.
+    UMAP feeds figures and the interactive overlays and nothing else, so a change
+    here cannot alter any numerical result.
+
+    Its k=30 matches the diffusion map's k by coincidence, not by design, and its
+    metric (cosine) does not match the diffusion map's (euclidean). Neither value
+    is reachable from the CLI — ``run_all.py`` calls ``run_umap(X_embed)`` bare.
+
+    Returns ``(None, None)`` when umap-learn is missing; callers must handle that,
+    and ``run_all.py`` does by guarding every plot on ``if X_umap is not None``.
+    """
     if not UMAP_AVAILABLE:
         print("  WARNING: umap-learn not installed, skipping UMAP.")
         return None, None
@@ -109,7 +180,32 @@ def cluster_leiden(
     resolution: float = 1.0,
     metric: str = "cosine",
 ) -> np.ndarray:
-    """Run Leiden clustering on a KNN graph built in PCA space."""
+    """Run Leiden clustering on a KNN graph built in PCA space.
+
+    ``n_neighbors`` and ``metric`` are NOT plumbed to the CLI — ``run_all.py``
+    passes only ``resolution``, so the k=15 / cosine defaults here are what every
+    published run used. ``resolution`` is the exception: its default of 1.0 is
+    never used in practice, since ``run_all.py`` always supplies
+    ``--leiden-resolution`` (0.5 in every job script).
+
+    Graph construction, in order:
+
+    1. ``kneighbors_graph(mode="distance")`` gives a DIRECTED k-NN graph — each
+       node points at its own 15 nearest neighbours.
+    2. Distances become similarities through a Gaussian kernel,
+       ``exp(-d^2 / 2*sigma^2)``, with ``sigma`` the median edge distance. Sigma
+       is therefore data-dependent: it is recomputed per run and is not a fixed
+       scale, so similarity values are not comparable across runs.
+    3. The graph is handed to igraph as UNDIRECTED, which unions the directed
+       edges — an edge survives if either endpoint listed the other. ``simplify``
+       then collapses duplicates keeping the maximum weight, and drops self-loops.
+
+    One edge case: a distance of exactly 0 (identical feature vectors) is an
+    implicit zero in the sparse matrix, so ``adj.nonzero()`` skips it and those
+    two patches get no edge between them. Duplicate patches are thus disconnected
+    rather than maximally connected. This has never been observed to matter with
+    Phikon features, which are effectively never bitwise identical.
+    """
     if not LEIDEN_AVAILABLE:
         raise ImportError(
             "leidenalg and igraph are required for Leiden clustering.  "

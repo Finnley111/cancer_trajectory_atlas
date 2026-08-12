@@ -46,11 +46,39 @@ def compute_diffusion_map(
     n_neighbors: int = 30,
     n_comps: int = 10,
 ) -> "ad.AnnData":
-    """Build the neighbor graph and compute diffusion map components."""
+    """Build the neighbor graph and compute diffusion map components.
+
+    THIS IS NOT THE CLUSTERING GRAPH. It is a second, independent k-NN graph
+    over the same ``X_embed`` matrix, and it differs from the Leiden graph in
+    both k and metric:
+
+        Leiden      k=15, cosine     (analysis/clustering.py:cluster_leiden)
+        this graph  k=30, EUCLIDEAN  (here)
+
+    **The euclidean metric is not a choice — it is scanpy's default.** The
+    ``sc.pp.neighbors`` call below passes no ``metric`` argument, so scanpy
+    supplies ``metric='euclidean'``. There is no CLI flag for it; changing it
+    means editing this line. ``n_neighbors`` IS configurable, via
+    ``--diffmap-neighbors`` (default 30).
+
+    See the module docstring of ``analysis/clustering.py`` for the full
+    three-graph picture and why cluster membership and pseudotime position are
+    answering different geometric questions.
+
+    ``use_rep="X"`` makes scanpy read ``adata.X`` directly rather than
+    recomputing a PCA, so the diffusion map sees exactly the matrix
+    ``build_adata`` was handed — post-batch-correction when one is active.
+
+    This function must run before ``compute_paga_topology`` and
+    ``compute_dpt_multi_root``; both consume the graph it writes into
+    ``adata.uns['neighbors']``.
+    """
     _require_scanpy()
     import scanpy as sc # dynamic import
 
     print(f"  Building neighbor graph (k={n_neighbors})...")
+    # No metric= here: scanpy defaults to euclidean. Deliberate to leave as-is
+    # (every published run used it), but it is NOT the cosine metric Leiden uses.
     sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X")
 
     print(f"  Computing diffusion map ({n_comps} components)...")
@@ -234,6 +262,21 @@ def compute_paga_topology(
     """Run PAGA and report connected-component count of the cluster graph.
 
     Requires that sc.pp.neighbors has already been called (compute_diffusion_map).
+
+    THIS GATE MIXES BOTH NEIGHBOUR GRAPHS, which is what makes its verdict easy
+    to misread. It groups patches by ``adata.obs['cluster']`` — Leiden labels
+    from the k=15 COSINE graph — but the connectivities PAGA computes come from
+    ``adata.uns['neighbors']``, the k=30 EUCLIDEAN diffusion graph.
+
+    So "SINGLE component -> DPT is valid" means precisely: *the euclidean k=30
+    manifold is connected between the cosine k=15 clusters*. It is not a
+    statement about the clustering graph, and a disconnected result does not
+    imply the Leiden clusters are separable. See ``analysis/clustering.py``'s
+    module docstring for the three-graph layout.
+
+    ``threshold=0.05`` is applied to PAGA connectivities before counting
+    components, so the answer is threshold-dependent; a lower threshold merges
+    components. It has never been exposed to the CLI.
 
     Returns:
         n_components: Number of connected components in the thresholded cluster graph.
