@@ -67,13 +67,23 @@ set -euo pipefail
 mkdir -p logs
 
 # ── Constants ─────────────────────────────────────────────────────────────────
+# Retarget without editing this file:
+#   RUN_BASE=$SCRATCH/results/per_section_v2 OUT_SUFFIX=_v2 sbatch <this script>
 SECTIONS=("2M-1" "2M-2")
-PER_SECTION_BASE="$SCRATCH/results/per_section"
+PER_SECTION_BASE="${RUN_BASE:-$SCRATCH/results/per_section}"
 RUN_DIRS=(
     "$PER_SECTION_BASE/atlas_2M-1"
     "$PER_SECTION_BASE/atlas_2M-2"
 )
-OUTPUT_DIR="$SCRATCH/results/eccentricity"
+OUTPUT_DIR="$SCRATCH/results/eccentricity${OUT_SUFFIX:-}"
+
+# Refuse to overwrite an existing result set. The pre-fix and post-fix runs differ
+# ONLY in h_intensity, so once overwritten they are impossible to tell apart.
+if [ -n "$(ls -A "$OUTPUT_DIR" 2>/dev/null)" ] && [ "${FORCE:-0}" != "1" ]; then
+    echo "ERROR: $OUTPUT_DIR already exists and is not empty."
+    echo "       Set OUT_SUFFIX=_v2 to write elsewhere, or FORCE=1 to overwrite."
+    exit 1
+fi
 N_BINS=10
 TAIL_FRACTION=0.10
 K_MIN=2
