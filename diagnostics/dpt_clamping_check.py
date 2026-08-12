@@ -159,9 +159,17 @@ def analyse(section: str, run_dir: Path) -> dict:
             "explained."
         )
     else:
+        med_rel = s.get("median_std_as_frac_of_axis")
         verdict = (
-            "CLEAN — the graph is connected and std is not a deterministic function "
-            "of pseudotime, so per-patch root disagreement is real information."
+            "NO CLAMP ARTIFACT — the graph is connected (1 component, every patch "
+            "reachable), so DPT never returns inf for graph reasons and the clamp "
+            "cannot fire; and std is not a deterministic function of pseudotime "
+            f"(R^2 = {s.get('std_vs_one_minus_pt_r_squared', float('nan')):.3f}). "
+            "This clears ONE specific artifact and nothing else: whatever "
+            "per-patch root disagreement the section has is REAL disagreement, "
+            "which makes a large value worse news rather than better, because "
+            "there is no mechanism left to blame it on. Read the magnitude in "
+            "pseudotime_std_analysis before concluding anything is fine."
         )
     out["verdict"] = verdict
     return out

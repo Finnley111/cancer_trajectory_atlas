@@ -188,10 +188,14 @@ def analyse(section: str, run_dir: Path, out_dir: Path,
         "intercept_b": float(A[1]),
         "r_squared": float(r2),
         "max_abs_residual_as_frac_of_max_std": max_rel_dev,
+        # Only meaningful if the two-point model actually describes the data. The
+        # inversion std = sqrt(f(1-f)) * span presumes every root run contributes
+        # either the patch's true value or the clamped maximum; when R^2 says the
+        # model does not hold, this is just an artefact of inverting the wrong
+        # equation. Report None rather than a number that invites being quoted.
         "implied_fraction_of_roots_clamped": (
-            # std = sqrt(f(1-f)) * span  =>  solve for the smaller root f
-            float(0.5 - 0.5 * np.sqrt(max(0.0, 1.0 - 4.0 * min(0.25, (A[0] / 1.0) ** 2))))
-            if np.isfinite(A[0]) else float("nan")
+            float(0.5 - 0.5 * np.sqrt(max(0.0, 1.0 - 4.0 * min(0.25, A[0] ** 2))))
+            if (np.isfinite(A[0]) and np.isfinite(r2) and r2 >= 0.98) else None
         ),
         "deterministic": bool(np.isfinite(r2) and r2 >= 0.98),
         "interpretation": (

@@ -36,10 +36,19 @@
 set -euo pipefail
 mkdir -p logs
 
-PER_SECTION_BASE="$SCRATCH/results/per_section"
+# Retarget without editing this file:
+#   RUN_BASE=$SCRATCH/results/per_section_v2 OUT_SUFFIX=_v2 sbatch <this script>
+PER_SECTION_BASE="${RUN_BASE:-$SCRATCH/results/per_section}"
 RUN_A="$PER_SECTION_BASE/atlas_2M-1"
 RUN_B="$PER_SECTION_BASE/atlas_2M-2"
-OUTPUT_DIR="$SCRATCH/results/sign_flip_check"
+OUTPUT_DIR="$SCRATCH/results/sign_flip_check${OUT_SUFFIX:-}"
+
+# Refuse to write over an existing result set — see run_pseudotime_std_analysis.sh.
+if [ -n "$(ls -A "$OUTPUT_DIR" 2>/dev/null)" ] && [ "${FORCE:-0}" != "1" ]; then
+    echo "ERROR: $OUTPUT_DIR already exists and is not empty."
+    echo "       Set OUT_SUFFIX=_v2 to write elsewhere, or FORCE=1 to overwrite."
+    exit 1
+fi
 
 echo "============================================================"
 echo "  TASK 3 — sign-flip check"
