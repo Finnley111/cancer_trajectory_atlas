@@ -210,6 +210,25 @@ cd ~/cancer_trajectory_atlas && python converters/batch_convert.py
 
 Takes no arguments — paths are hardcoded relative to the repo root, so the `cd` matters.
 
+### Visual QC of annotations
+
+After regenerating, check that the polygons actually land on tissue before committing to
+a run. `jobs/check_annotations.py` draws every polygon as a coloured outline over a
+slide thumbnail (Tumor red, Ignore\* grey, Necrosis dark red, Region\* blue, other orange):
+
+```bash
+python ~/cancer_trajectory_atlas/jobs/check_annotations.py \
+    --png-dir    $SCRATCH/data/MCF7_x5_cropped \
+    --ann-dir    ~/cancer_trajectory_atlas/data/annotations_ratio \
+    --dims-json  $SCRATCH/data/MCF7_x5_cropped/slide_dimensions.json \
+    --output-dir $SCRATCH/annotation_check
+```
+
+Run as a plain script, not with `-m`. Sample output is kept in `data/annot_check_test/`.
+This step used to be Step 2 of `jobs/submit_annotation_check.sh`, which was archived in
+Phase 1 because its Step 1 called a module that no longer exists; the QC step itself was
+never broken.
+
 ### Round-trip invariant (important)
 
 `batch_convert.py` **divides** polygon coordinates by `converters/img_dims.txt`.

@@ -78,13 +78,23 @@ def load_roi_polygons(
         which equals [0, cropped_width].  This is the SAME as patch x-space,
         so no further offset is needed.
 
-    Right-half polygons (centroid x > cropped_w) are discarded; they would
-    correspond to the duplicate slide copy that is cropped out.
+    Right-half polygons are discarded; they would correspond to the duplicate
+    slide copy that is cropped out. Precisely: the discard runs only when BOTH
+    ``cropped_w`` and ``original_full_width`` are supplied, and it drops any
+    polygon whose centroid has ``cx > cropped_w`` OR ``cy > cropped_h``. The
+    y-condition never fires in practice because the crop is horizontal only
+    (``cropped_h == original_full_height``), but it is there.
+
+    "Centroid" here is the mean of the path's vertices, not the area centroid,
+    and for a polygon with holes the inner-ring vertices are included in that
+    mean. This is accurate enough to separate left-half from right-half copies,
+    which is all it is used for.
 
     Classification rules
     --------------------
-    "Tumor" or unclassified → inclusion zone.
+    "Tumor" or unclassified (no ``properties.classification``) → inclusion zone.
     Any other name (Ignore*, Necrosis, Region*, …) → exclusion zone.
+    The match on "Tumor" is exact and case-sensitive.
 
     Returns
     -------
@@ -223,9 +233,19 @@ def get_patches_from_array(
     exclude_polygons — exclusion zones (Ignore*, Necrosis, etc.): patches whose
                        centre falls inside any of these are always dropped.
     min_roi_coverage — if set, patches where less than this fraction of a 3x3
-                       sample grid lies inside the containing ROI polygon are
-                       dropped (catches boundary patches that are mostly outside
-                       the annotation). None = centre-point check only.
+                       sample grid lies inside ANY inclusion polygon are dropped
+                       (catches boundary patches that are mostly outside the
+                       annotation). None = centre-point check only.
+
+                       Note: the grid is tested against the whole roi_polygons
+                       list, not only the polygon containing the centre — see
+                       _coverage_in_rois. A patch straddling two adjacent ROIs
+                       is therefore counted as covered, which is intended.
+
+    Filter order is fixed and matters for the reported counts: ROI inclusion →
+    coverage → exclusion → white-pixel → HSV tissue. A patch rejected by an
+    earlier filter is never counted by a later one, so the printed tallies are
+    disjoint, not overlapping.
     """
     h, w = img_arr.shape[:2]
     patches, coords = [], []

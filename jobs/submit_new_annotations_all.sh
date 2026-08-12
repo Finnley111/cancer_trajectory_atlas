@@ -5,7 +5,8 @@
 #   $SCRATCH/results/new_annotations/<run_type>/
 #
 # Prerequisites:
-#   - annotations_ratio/ exists (run submit_annotation_check.sh first)
+#   - annotations_ratio/ exists (generate it with:
+#       cd ~/cancer_trajectory_atlas && python converters/batch_convert.py )
 #   - Phikon model cached at $SCRATCH/huggingface_cache
 #
 # Usage:

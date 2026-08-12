@@ -1,4 +1,22 @@
-"""Stain normalization helpers for slide preprocessing."""
+"""Stain normalization helpers for slide preprocessing.
+
+Two behaviours here are load-bearing for interpreting any run's results, and
+neither is obvious from the call site. Both are described precisely on the
+functions below; summarised here because they belong in Methods:
+
+1. The stain reference is **whichever slide sorts first**, not a chosen reference
+   slide. Changing the slide subset can change the reference, and therefore
+   changes the normalization applied to every other slide. See
+   :func:`build_normalizer`.
+
+2. Normalization failure is **silent and per-slide**. A slide whose transform
+   raises is passed through un-normalized with only a stdout warning; nothing is
+   persisted. See :func:`normalize_slide`.
+
+Neither affects the current reference outputs (``per_section_v2``), which run
+with ``--stain-method none`` — ``build_normalizer`` returns ``None`` and
+``normalize_slide`` returns its input unchanged on the first line.
+"""
 
 import numpy as np
 from pathlib import Path
@@ -65,7 +83,31 @@ class ReinhardNormalizer:
 # Public API
 
 def build_normalizer(method: str, reference_image_path: str):
-    """Build a stain normalizer fitted to a reference slide."""
+    """Build a stain normalizer fitted to a reference slide.
+
+    Reference slide selection
+    -------------------------
+    ``run_all.py`` passes ``slides[0]["image"]`` — the **first slide in sorted
+    PNG-filename order**, after any ``--slides`` / ``--slides-from-file`` filter
+    has been applied. There is no designated reference slide.
+
+    The consequence is that **running a subset can change the reference**, and
+    with it the normalization applied to every slide in that run. Two runs over
+    different subsets are therefore not directly comparable under ``reinhard``
+    or ``macenko``. ``run_all.py`` copies the chosen reference to
+    ``<output_dir>/stain_reference.png`` so it can be recovered after the fact.
+
+    Methods
+    -------
+    ``"none"`` returns ``None`` (no normalization, the current default for all
+    reference runs). ``"reinhard"`` uses the in-file :class:`ReinhardNormalizer`.
+    ``"macenko"`` and ``"vahadane"`` both route to ``staintools``; note that
+    ``vahadane`` is reachable only by calling this function directly, since
+    ``run_all.py`` restricts ``--stain-method`` to reinhard/macenko/none.
+
+    Raises ``ValueError`` on an unrecognised method and ``ImportError`` if
+    ``staintools`` is missing for the methods that need it.
+    """
     method = (method or "none").lower()
     if method == "none":
         return None
@@ -102,7 +144,23 @@ def build_normalizer(method: str, reference_image_path: str):
 
 
 def normalize_slide(image_array: np.ndarray, normalizer, slide_name: str = "") -> np.ndarray:
-    """Apply stain normalization to one slide image array."""
+    """Apply stain normalization to one slide image array.
+
+    Failure semantics — read before trusting a normalized run
+    --------------------------------------------------------
+    Any exception raised by ``normalizer.transform`` is caught and the **original,
+    un-normalized array is returned**. A warning goes to stdout and nothing else
+    is recorded: no sentinel, no counter, no entry in ``feature_failures.json``.
+
+    A run can therefore be silently half-normalized, and after the fact the only
+    evidence is the SLURM log. This is deliberately *unlike* the feature-extraction
+    path, which encodes failure as NaN and persists a diagnostic. If you are
+    interpreting a ``reinhard`` or ``macenko`` run, grep its log for
+    "Stain normalization failed" before drawing conclusions.
+
+    ``normalizer is None`` (i.e. ``--stain-method none``) returns the input
+    immediately and is not a failure path.
+    """
     if normalizer is None:
         return image_array
 
