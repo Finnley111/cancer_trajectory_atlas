@@ -358,8 +358,33 @@ def run_pipeline(cfg: PipelineConfig):
 
         orig_count = len(patches)
 
-        # Cache always stores full (uncapped) features — cap is applied in Pass 2
-        # after the cohort median is known. Do not sample here.
+        # ── Feature cache contract ────────────────────────────────────────────
+        # The cache always stores FULL (uncapped) features — the cap is applied in
+        # Pass 2, after the cohort median is known. Do not sample here: sampling
+        # before caching would bake a particular cap into the cache file and make
+        # it invalid for any run with a different slide subset.
+        #
+        # The shape guard below is load-bearing. It is the only thing standing
+        # between a stale cache and silently wrong features, so do not weaken it,
+        # wrap it in a try, or downgrade it to a warning.
+        #
+        # WHAT IT CATCHES: any change that alters how many patches a slide yields
+        # — --patch-size, --stride, --min-roi-coverage, edited annotations, and
+        # (usually) --stain-method, since normalization runs before the white and
+        # HSV tissue filters and therefore changes which patches survive.
+        #
+        # WHAT IT DOES NOT CATCH, because the cache key is the slide name alone
+        # and the check compares N but not D:
+        #   * A DIFFERENT MODEL. `--model resnet50` against a phikon-populated
+        #     cache passes this check (both have N rows) and silently uses 768-dim
+        #     Phikon features for a run labelled resnet50.
+        #   * A --stain-method change that happens to leave the patch count
+        #     unchanged while changing every pixel.
+        # Until the cache key encodes the model and extraction settings, ONE CACHE
+        # DIRECTORY MUST SERVE EXACTLY ONE (model, patch_size, stride,
+        # min_roi_coverage, stain_method) combination. All job scripts currently
+        # share $SCRATCH/data/features_cache and all pass --model phikon
+        # --patch-size 112 --stride 96 --stain-method none, so this holds today.
         slide_feats = None
         if cfg.features_cache_dir:
             cache_file = Path(cfg.features_cache_dir) / f"{slide_name}_features.npy"

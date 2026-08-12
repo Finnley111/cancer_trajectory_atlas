@@ -1,4 +1,40 @@
-"""Feature extraction helpers for Phikon and ResNet backbones."""
+"""Feature extraction helpers for Phikon and ResNet backbones.
+
+Two extraction entry points, and why they are interchangeable
+------------------------------------------------------------
+:func:`extract_features` loads a model and extracts in one call. It is the bulk
+path, used when no feature cache is configured.
+
+:func:`load_model_components` + :func:`extract_features_from_model` split the same
+work so the weights are loaded once and reused across slides. This is the cache
+path in ``run_all.py``.
+
+**The two produce the same numbers**, and the feature cache is only legitimate
+because they do. Their inner loops are identical (same batch size of 32, same
+preprocessing, same CLS-token slice), and both backbones are batch-composition
+independent at inference: Phikon is a ViT using LayerNorm, and the ResNet variants
+run under ``model.eval()`` so BatchNorm uses running statistics rather than batch
+statistics. Splitting a cohort into per-slide batches therefore cannot change any
+individual patch's embedding. If a backbone with batch-dependent inference is ever
+added, that equivalence breaks and the cache becomes invalid.
+
+The one caveat is floating point: differing final-batch sizes can select different
+cuDNN kernels, so cached and freshly-extracted features may differ in the last
+ULP or so. Comparisons between a cached run and a non-cached run should not expect
+bitwise equality; comparisons between two cached runs should.
+
+Output shapes
+-------------
+Phikon returns the CLS token of the last hidden state, 768-dim. The ResNet
+variants return pooled convolutional features (2048-dim for resnet50/101,
+512-dim for resnet18). Both return float32 ``(N, D)``.
+
+**Nothing in the returned array records which model produced it.** The arrays are
+saved to the cache as bare ``.npy`` with no metadata, and ``run_all.py``'s cache
+guard compares N but not D — so a cache populated by one backbone will be accepted
+by a run configured for another. See the cache contract comment in
+``run_all.py:run_pipeline`` for the full consequences.
+"""
 
 import torch
 import numpy as np
