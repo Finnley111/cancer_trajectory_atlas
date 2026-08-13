@@ -350,6 +350,8 @@ def run_pipeline(cfg: PipelineConfig):
             roi_polygons=roi_polys,
             exclude_polygons=exclude_polys,
             min_roi_coverage=cfg.min_roi_coverage,
+            apply_white_filter=not cfg.relaxed_tissue_filters,
+            apply_tissue_filter=not cfg.relaxed_tissue_filters,
         )
 
         if len(patches) == 0:
@@ -590,7 +592,36 @@ def run_pipeline(cfg: PipelineConfig):
         all_patches, return_diagnostics=True,
     )
     print(f"  Nuclear density done: {time.time() - t_nd:.1f}s")
-    compute_dpt_multi_root(adata, nuclear_density_quick, n_roots=cfg.n_roots)
+
+    # ── Root source ──────────────────────────────────────────────────────────
+    # Default "cellularity" is the production rule and passes root_indices=None,
+    # so compute_dpt_multi_root behaves exactly as it did for v2. "holeyness"
+    # anchors instead on expert-annotated per-duct hole %, which is derived from
+    # hand annotation rather than from the pipeline's own pixels — that is what
+    # removes the circularity of rooting on nuclear_density while nuclear_density
+    # is also a validation feature and the cellularity-confound covariate.
+    holeyness_root_report = None
+    root_indices = None
+    if cfg.root_source == "holeyness":
+        from .analysis.holeyness_roots import select_holeyness_roots
+        root_indices, holeyness_root_report = select_holeyness_roots(
+            coords=all_coords,
+            slide_ids=slide_ids,
+            slide_names=slide_names,
+            annotation_dir=Path(cfg.annotation_dir),
+            export_path=Path(cfg.holeyness_export),
+            slide_dimensions_path=Path(cfg.holeyness_slide_dims),
+            n_roots=cfg.n_roots,
+            percentile=cfg.holeyness_percentile,
+            min_patches_per_duct=cfg.holeyness_min_patches,
+            patch_size=cfg.patch_size,
+        )
+        io.save_json(holeyness_root_report, output_dir / "holeyness_roots.json")
+        print(f"  Holeyness root report: {output_dir / 'holeyness_roots.json'}")
+
+    compute_dpt_multi_root(
+        adata, nuclear_density_quick, n_roots=cfg.n_roots, root_indices=root_indices,
+    )
 
     pseudotime = adata.obs["pseudotime"].values
     pseudotime_std = adata.obs["pseudotime_std"].values
@@ -865,6 +896,48 @@ Examples:
                              "nuclear density; patches whose density failed to extract "
                              "are excluded first. This is the only root flag with an "
                              "effect. (default: 20)")
+    # ── v3 root/filter experiment. Both default to production behaviour. ──────
+    parser.add_argument("--relaxed-tissue-filters", action="store_true",
+                        help="v3 EXPERIMENT ONLY. Disable BOTH patch-level tissue "
+                             "filters (white rejection and the HSV tissue check) in "
+                             "features/patching.py. ROI inclusion/exclusion stay on. "
+                             "Background and slide-edge patches then enter the "
+                             "embedding, which changes the patch count, the PCA "
+                             "basis and every downstream number — such a run is NOT "
+                             "comparable to a production run on absolute values. "
+                             "Also requires a SEPARATE --features-cache-dir: the "
+                             "cache guard compares N and will correctly reject the "
+                             "production cache. (default: off)")
+    parser.add_argument("--root-source", type=str, default="cellularity",
+                        choices=["cellularity", "holeyness"],
+                        help="Where DPT roots come from. 'cellularity' (default) is "
+                             "the production rule: the n patches with the lowest "
+                             "MEASURED nuclear density. 'holeyness' instead draws "
+                             "them from expert-annotated per-duct hole %%, which is "
+                             "derived from hand annotation rather than from the "
+                             "pipeline's pixels, and so removes the circularity of "
+                             "anchoring on a quantity that is simultaneously a "
+                             "validation feature and the confound covariate. "
+                             "'holeyness' requires --holeyness-export and "
+                             "--holeyness-slide-dims.")
+    parser.add_argument("--holeyness-export", type=Path, default=None,
+                        help="QuPath combined_matched_measurements.txt (tab-separated), "
+                             "carrying per-duct 'holes_carnoys: hole %%' keyed by "
+                             "Object ID. Required by --root-source holeyness.")
+    parser.add_argument("--holeyness-slide-dims", type=Path, default=None,
+                        help="slide_dimensions.json for the PNG dir, used to map "
+                             "ratio-space duct polygons into cropped-PNG pixels. "
+                             "Required by --root-source holeyness.")
+    parser.add_argument("--holeyness-percentile", type=float, default=10.0,
+                        help="Percentile of the PER-DUCT hole %% distribution defining "
+                             "the low-holeyness candidate pool. Taken over ducts, not "
+                             "patches, so large ducts do not drag the threshold. "
+                             "(default: 10.0)")
+    parser.add_argument("--holeyness-min-patches", type=int, default=1,
+                        help="Minimum assigned patches for a duct to be a root "
+                             "candidate. Default 1: a higher value would exclude more "
+                             "small ducts, and small ducts are already the population "
+                             "the centre-in-polygon rule under-samples. (default: 1)")
     parser.add_argument("--root-metric", type=str, default="cellularity",
                         choices=["cellularity"],
                         help="VESTIGIAL NO-OP — accepted but never read. The root "
@@ -895,6 +968,23 @@ Examples:
         parser.print_help()
         print("\n  Specify --convert, --run, or both.")
         sys.exit(0)
+
+    # Fail here rather than four hours into a run, after patching and embedding.
+    if args.root_source == "holeyness":
+        for flag, val in (("--holeyness-export", args.holeyness_export),
+                          ("--holeyness-slide-dims", args.holeyness_slide_dims)):
+            if val is None:
+                parser.error(f"--root-source holeyness requires {flag}")
+            if not Path(val).exists():
+                parser.error(f"{flag} path not found: {val}")
+        if not 0.0 < args.holeyness_percentile < 100.0:
+            parser.error("--holeyness-percentile must be strictly between 0 and 100")
+    if args.relaxed_tissue_filters and args.features_cache_dir is not None:
+        print("\n  NOTE: --relaxed-tissue-filters changes the patch count, so the "
+              "feature cache\n        at "
+              f"{args.features_cache_dir}\n        must be one populated with the "
+              "SAME relaxed settings. run_all's cache guard\n        compares N and "
+              "will raise rather than silently reuse a production cache.\n")
 
     cfg = PipelineConfig(
         ndpi_dir=args.ndpi_dir,
@@ -927,6 +1017,12 @@ Examples:
         cap_strategy=args.cap_strategy,
         target_total=args.target_total,
         min_roi_coverage=args.min_roi_coverage,
+        relaxed_tissue_filters=args.relaxed_tissue_filters,
+        root_source=args.root_source,
+        holeyness_export=args.holeyness_export,
+        holeyness_slide_dims=args.holeyness_slide_dims,
+        holeyness_percentile=args.holeyness_percentile,
+        holeyness_min_patches=args.holeyness_min_patches,
         root_cluster=str(args.root_cluster) if args.root_cluster is not None else None,
         n_roots=args.n_roots,
         root_metric=args.root_metric,

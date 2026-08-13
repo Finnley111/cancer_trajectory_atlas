@@ -71,6 +71,23 @@ class PipelineConfig:
     cap_strategy: str = "median"
     target_total: int = 3200
 
+    # ── v3 root/filter experiment (2M-1). All default to production behaviour ──
+    # relaxed_tissue_filters=False and root_source="cellularity" reproduce every
+    # run made before 2026-08-13; nothing on the production path sets either.
+    #   relaxed_tissue_filters — disable BOTH the white and HSV tissue filters in
+    #     features/patching.py. Changes the patch count, hence the PCA basis and
+    #     every downstream number, so such a run is not comparable to a
+    #     production run on absolute values.
+    #   root_source="holeyness" — select DPT roots from expert-annotated per-duct
+    #     hole %, via analysis/holeyness_roots.py, instead of nuclear density.
+    #     Requires holeyness_export and holeyness_slide_dims.
+    relaxed_tissue_filters: bool = False
+    root_source: str = "cellularity"
+    holeyness_export: Path = None
+    holeyness_slide_dims: Path = None
+    holeyness_percentile: float = 10.0
+    holeyness_min_patches: int = 1
+
     # Minimum fraction of the patch area that must lie inside an ROI polygon.
     # None = centre-point check only (original behaviour).
     # 0.5 = drop patches where more than half the area is outside the annotation.

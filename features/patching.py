@@ -1,4 +1,11 @@
-"""Patch extraction and basic tissue filtering for whole-slide images."""
+"""Patch extraction and basic tissue filtering for whole-slide images.
+
+The five filters in ``get_patches_from_array`` run in a fixed order and every
+published run used all five. ``apply_white_filter`` / ``apply_tissue_filter``
+were added for the v3 relaxed-filter experiment and default to True, so with no
+argument passed this module behaves exactly as it did for the v2 per-section
+runs. Nothing on the production path sets them.
+"""
 
 import numpy as np
 from PIL import Image
@@ -226,12 +233,27 @@ def get_patches_from_array(
     roi_polygons: Optional[List] = None,
     exclude_polygons: Optional[List] = None,
     min_roi_coverage: Optional[float] = None,
+    apply_white_filter: bool = True,
+    apply_tissue_filter: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Extract filtered tissue patches from an in-memory RGB image.
 
     roi_polygons     — inclusion zones: patch centre must be inside at least one.
     exclude_polygons — exclusion zones (Ignore*, Necrosis, etc.): patches whose
                        centre falls inside any of these are always dropped.
+
+    apply_white_filter / apply_tissue_filter — default True, which is the ONLY
+                       behaviour any published run has used. Both exist solely
+                       for the v3 relaxed-filter experiment (Configs B and C of
+                       jobs/run_v3b_relaxed.sh / run_v3c_both.sh), which asks
+                       what the manifold looks like when background is not
+                       removed. With either set False this function emits
+                       patches the production pipeline would never have seen —
+                       background, slide edge, and out-of-focus glass — so the
+                       resulting patch count, PCA basis and every downstream
+                       number are NOT comparable to a production run on absolute
+                       values. Leave both True unless you are running that
+                       experiment.
     min_roi_coverage — if set, patches where less than this fraction of a 3x3
                        sample grid lies inside ANY inclusion polygon are dropped
                        (catches boundary patches that are mostly outside the
@@ -258,6 +280,13 @@ def get_patches_from_array(
     n_roi_rejected = 0
     n_exclude_rejected = 0
     n_coverage_rejected = 0
+    n_white_rejected = 0
+    n_tissue_rejected = 0
+
+    if not (apply_white_filter and apply_tissue_filter):
+        print(f"    RELAXED FILTERS: white={apply_white_filter}, "
+              f"tissue_hsv={apply_tissue_filter} — background patches will be kept. "
+              "Output is NOT comparable to a production run.")
 
     with tqdm(total=total, desc=f"Patching {image_name}") as pbar:
         for y in y_steps:
@@ -285,13 +314,16 @@ def get_patches_from_array(
                 patch_arr = img_arr[y : y + patch_size, x : x + patch_size]
 
                 # White-pixel rejection.
-                if _is_mostly_white(patch_arr, white_thresh, white_frac):
+                if apply_white_filter and _is_mostly_white(patch_arr, white_thresh, white_frac):
+                    n_white_rejected += 1
                     continue
 
                 # HSV tissue check.
-                patch_pil = Image.fromarray(patch_arr)
-                if not _has_tissue_hsv(patch_pil, sat_thresh, val_thresh, tissue_threshold):
-                    continue
+                if apply_tissue_filter:
+                    patch_pil = Image.fromarray(patch_arr)
+                    if not _has_tissue_hsv(patch_pil, sat_thresh, val_thresh, tissue_threshold):
+                        n_tissue_rejected += 1
+                        continue
 
                 patches.append(patch_arr)
                 coords.append((x, y))
@@ -302,6 +334,15 @@ def get_patches_from_array(
         print(f"  Coverage filter: {n_coverage_rejected} patches below {min_roi_coverage:.0%} ROI coverage")
     if n_exclude_rejected:
         print(f"  Exclude filter: {n_exclude_rejected} patches inside Ignore/Necrosis regions")
+
+    # Printed only under relaxed filters, so production logs stay byte-identical.
+    # With both filters on these two counts are recoverable anyway, as
+    # total - roi - coverage - exclude - kept.
+    if not (apply_white_filter and apply_tissue_filter):
+        print(f"  White filter:  {n_white_rejected} rejected "
+              f"({'ON' if apply_white_filter else 'DISABLED'})")
+        print(f"  Tissue filter: {n_tissue_rejected} rejected "
+              f"({'ON' if apply_tissue_filter else 'DISABLED'})")
 
     if total > 0:
         print(f"  Kept {len(patches)} / {total} patches ({len(patches)/total:.1%})")
@@ -337,6 +378,8 @@ def get_patches(
     val_thresh: int = 230,
     white_thresh: int = 220,
     white_frac: float = 0.70,
+    apply_white_filter: bool = True,
+    apply_tissue_filter: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Load an image from disk and extract patches."""
     print(f"Scanning image: {image_path}")
@@ -356,4 +399,6 @@ def get_patches(
         white_thresh=white_thresh,
         white_frac=white_frac,
         image_name=image_path,
+        apply_white_filter=apply_white_filter,
+        apply_tissue_filter=apply_tissue_filter,
     )

@@ -1,7 +1,7 @@
 """Diffusion pseudotime utilities built on scanpy."""
 
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 def _require_scanpy():
     try:
@@ -184,8 +184,28 @@ def compute_dpt_multi_root(
     adata: "ad.AnnData",
     nuclear_density: np.ndarray,
     n_roots: int = 20,
+    root_indices: Optional[Sequence[int]] = None,
 ) -> "ad.AnnData":
     """Run DPT from n_roots lowest-cellularity root candidates; median-aggregate.
+
+    ``root_indices`` (default None) OVERRIDES the density ranking with a
+    caller-supplied root set. Added for the v3 holeyness-rooted experiment
+    (``analysis/holeyness_roots.py``), which anchors the axis on expert-annotated
+    per-duct hole %, a quantity derived from hand annotation rather than from the
+    pipeline's own pixels — so it removes the circularity of rooting on
+    nuclear_density, which is simultaneously a validation feature and the
+    cellularity-confound covariate.
+
+    When it is None — every production run to date — nothing below changes: the
+    density rule, the non-finite masking, the clamping, the median aggregation
+    and the min-max normalisation are all exactly as they were. When it is
+    supplied, ONLY the root set changes; ``nuclear_density`` is then used solely
+    for the diagnostic print and may legitimately be all-finite-but-unranked.
+
+    Note that a root-rule change is EXPECTED to alter the axis ORIENTATION and
+    the root set, not the ordering: uniformly random 20-root sets already
+    reproduce the production pseudotime at |rho| 0.78-0.89, so the manifold fixes
+    the ordering and the roots fix only which end is zero.
 
     For each root candidate r:
         pt_r = scanpy DPT with iroot=r
@@ -234,32 +254,70 @@ def compute_dpt_multi_root(
 
     n_patches = len(adata)
 
-    # Root candidates must come from patches whose density was actually MEASURED.
-    # nan means extraction failed (validation/morphological_features.py); such a
-    # patch has no density, so it cannot be "the least cellular". np.argsort does
-    # place nan last, which happens to give the right answer here, but relying on
-    # that is implicit and silently breaks if the sort or dtype ever changes —
-    # and the cost of being wrong is that the pseudotime ORIGIN is anchored on
-    # whichever patches crashed the segmenter. So mask explicitly.
-    finite = np.isfinite(nuclear_density)
-    n_excluded = int((~finite).sum())
-    if n_excluded:
-        print(f"  Excluding {n_excluded} patch(es) with non-finite nuclear density "
-              "from root candidates (failed extraction).")
-    finite_idx = np.flatnonzero(finite)
-    if finite_idx.size == 0:
-        raise ValueError(
-            "No patch has a finite nuclear density — every extraction failed, so "
-            "DPT roots cannot be selected. Check the feature-extraction log."
-        )
+    if root_indices is not None:
+        root_candidates = [int(i) for i in root_indices]
+        if not root_candidates:
+            raise ValueError(
+                "root_indices was supplied but empty — no DPT roots to run from. "
+                "The caller must either supply at least one index or pass None to "
+                "fall back to the nuclear-density rule."
+            )
+        bad = [i for i in root_candidates if i < 0 or i >= n_patches]
+        if bad:
+            raise ValueError(
+                f"root_indices contains {len(bad)} out-of-range value(s) for an "
+                f"adata with {n_patches} rows (first offenders: {bad[:5]}). This "
+                "usually means the root set was derived against a DIFFERENT patch "
+                "set than the one being run — check that the extraction settings "
+                "match."
+            )
+        if len(set(root_candidates)) != len(root_candidates):
+            raise ValueError(
+                "root_indices contains duplicates. Each root must be distinct, "
+                "otherwise the median across roots is silently weighted."
+            )
+        n_roots = len(root_candidates)
+        n_excluded = 0
+        print(f"  Multi-root DPT: {n_roots} CALLER-SUPPLIED root candidates "
+              "(nuclear-density ranking BYPASSED)")
+        nd_at_roots = nuclear_density[root_candidates]
+        finite_nd = nd_at_roots[np.isfinite(nd_at_roots)]
+        if finite_nd.size:
+            print(f"    nuclear density at those roots: "
+                  f"[{finite_nd.min():.4f}, {finite_nd.max():.4f}] "
+                  f"(reported only; not used for selection)")
+        adata.uns["dpt_root_source"] = "caller_supplied"
+    else:
+        adata.uns["dpt_root_source"] = "nuclear_density"
+        root_candidates = None  # resolved by the density rule below
 
-    n_roots = min(n_roots, finite_idx.size)
-    order = finite_idx[np.argsort(nuclear_density[finite_idx])]
-    root_candidates = order[:n_roots].tolist()
+    if root_candidates is None:
+        # Root candidates must come from patches whose density was actually MEASURED.
+        # nan means extraction failed (validation/morphological_features.py); such a
+        # patch has no density, so it cannot be "the least cellular". np.argsort does
+        # place nan last, which happens to give the right answer here, but relying on
+        # that is implicit and silently breaks if the sort or dtype ever changes —
+        # and the cost of being wrong is that the pseudotime ORIGIN is anchored on
+        # whichever patches crashed the segmenter. So mask explicitly.
+        finite = np.isfinite(nuclear_density)
+        n_excluded = int((~finite).sum())
+        if n_excluded:
+            print(f"  Excluding {n_excluded} patch(es) with non-finite nuclear density "
+                  "from root candidates (failed extraction).")
+        finite_idx = np.flatnonzero(finite)
+        if finite_idx.size == 0:
+            raise ValueError(
+                "No patch has a finite nuclear density — every extraction failed, so "
+                "DPT roots cannot be selected. Check the feature-extraction log."
+            )
 
-    print(f"  Multi-root DPT: {n_roots} root candidates "
-          f"(nuclear density range [{nuclear_density[root_candidates].min():.4f}, "
-          f"{nuclear_density[root_candidates[-1]]:.4f}])")
+        n_roots = min(n_roots, finite_idx.size)
+        order = finite_idx[np.argsort(nuclear_density[finite_idx])]
+        root_candidates = order[:n_roots].tolist()
+
+        print(f"  Multi-root DPT: {n_roots} root candidates "
+              f"(nuclear density range [{nuclear_density[root_candidates].min():.4f}, "
+              f"{nuclear_density[root_candidates[-1]]:.4f}])")
 
     # Persist the roots. Without this, the root set cannot be recovered from the
     # run afterwards — it has to be re-derived from a rule applied to a different
