@@ -33,7 +33,7 @@ echo "Run dir:    $RUN_DIR"
 echo "Slides dir: $SLIDES_DIR"
 echo "========================================"
 
-# Match the env setup from run_all_macenko.sh
+# Standard atlas environment (same modules every pipeline job loads)
 module load StdEnv/2023 python/3.11 gcc opencv openslide openblas hdf5 igraph
 source ~/envs/atlas/bin/activate
 

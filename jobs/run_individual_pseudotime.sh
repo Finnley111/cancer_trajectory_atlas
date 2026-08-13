@@ -1,4 +1,19 @@
 #!/bin/bash
+# Per-slide pseudotime via run_individual.py. Qualitative only — see that
+# module's header: no patch cap, no feature cache, per-slide PCA basis, and
+# single-root DPT, so these pseudotimes are NOT comparable with atlas runs.
+#
+# ⚠ STALE ANNOTATION PATH — --annotation-dir below still points at
+#   data/annotations, which held ratio-coordinate JSON when this script was
+#   written (2026-05-13) but holds QuPath GeoJSON since commit f050e4a. Running
+#   it as-is feeds absolute pixel coords to a loader that assumes ratios, which
+#   places every ROI off-canvas and yields few or no in-ROI patches.
+#
+#   To actually run this, change --annotation-dir to:
+#       ~/cancer_trajectory_atlas/data/annotations_ratio
+#   Left unchanged here because that alters what the script does; see
+#   NOTES.md -> Annotation directory -> History.
+#
 #SBATCH --account=def-lmarti46
 #SBATCH --time=6:00:00
 #SBATCH --gres=gpu:a100:1

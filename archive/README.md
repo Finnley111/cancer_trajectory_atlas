@@ -37,6 +37,42 @@ tree, and its invocation is now documented in `NOTES.md` → *Annotation directo
 script as a prerequisite ("run submit_annotation_check.sh first"). That comment now
 points at `converters/batch_convert.py` instead.
 
+### `jobs/` first-generation atlas run scripts — archived 2026-08-12, Phase 7
+
+Eight SLURM scripts, all added 2026-05-13 to 2026-05-28, superseded by the per-section
+workflow (`jobs/run_per_section.sh`, `jobs/run_per_section_v2.sh`).
+
+**Six of them cannot run correctly today.** They pass
+`--annotation-dir ~/cancer_trajectory_atlas/data/annotations`, which held the
+ratio-coordinate JSON when they were written. Commit `f050e4a` replaced that directory's
+contents with QuPath GeoJSON and moved the ratio files to `data/annotations_ratio/`.
+`load_roi_polygons` is always called with `coordinate_space="ratio"`, so feeding it
+absolute-pixel GeoJSON multiplies every coordinate by `original_full_width` a second
+time and puts every ROI off-canvas — few or no in-ROI patches would survive.
+
+**Results produced by these scripts at the time are NOT suspect.** They were correct
+when submitted; only the directory beneath them changed. See `NOTES.md` →
+*Annotation directory* → *History*.
+
+| Script | Why archived |
+|---|---|
+| `run_all_none.sh` | First-generation full-atlas run, one script per stain method, no Harmony, no patch cap. Stale annotation dir. |
+| `run_all_macenko.sh` | Same generation, Macenko variant. Stale annotation dir. |
+| `run_all_reinhard.sh` | Same generation, Reinhard variant. Stale annotation dir, and Reinhard was abandoned — `NOTES.md` records no-norm as the default. |
+| `run_all_none_section.sh` | Single-section runs via `--slides-from-file`. Superseded by `run_per_section.sh` (2026-06-27), which runs both sections with within-section LOO and a cross-section replication check. Stale annotation dir. |
+| `submit_harmony.sh` | Parameterised stain × harmony-key runner. Superseded by `run_cache_population.sh` / `run_full_experiments.sh`. Stale annotation dir. |
+| `submit_harmony_none.sh` | Hardcoded specialisation of `submit_harmony.sh`. Stale annotation dir. |
+| `submit_harmony_macenko.sh` | Hardcoded specialisation of `submit_harmony.sh`. Stale annotation dir. |
+| `run_all_capped.sh` | **Actively misleading.** Passes `--max-patches-per-slide` (default 1900) but never `--cap-strategy fixed`, so `cap_strategy` fell through to `median` and the cap value was inert. Any output it produced was median-capped, not 1900-capped. |
+
+**Kept in `jobs/` despite looking similar**, because both are load-bearing:
+`run_cache_population.sh` is named as the remedy in `run_all.py`'s cache-mismatch
+`RuntimeError` and in `run_per_section_v2.sh`'s cache gate; `run_per_section.sh` is the
+baseline that `run_per_section_v2.sh` reproduces and is referenced by four live scripts.
+
+**Dangling reference cleaned up:** `jobs/submit_qc.sh` said "Match the env setup from
+`run_all_macenko.sh`"; the module list is now inlined there instead.
+
 ### `analysis/diffusion_run_diffusion_pseudotime.py` — archived 2026-08-12, Phase 5
 
 The `run_diffusion_pseudotime` function, extracted verbatim from

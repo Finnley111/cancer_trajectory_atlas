@@ -9,6 +9,42 @@ distributes across patients.
 Usage:
     python -m cancer_trajectory_atlas.run_individual              # all slides
     python -m cancer_trajectory_atlas.run_individual --slide 6027-4L-2M-1
+
+DO NOT COMPARE THESE PSEUDOTIMES WITH THE ATLAS PSEUDOTIMES
+===========================================================
+This entry point is deliberately NOT the atlas pipeline restricted to one slide.
+It uses its own ``IndividualConfig`` dataclass rather than ``PipelineConfig``,
+and the two have diverged in ways that make the numbers non-comparable:
+
+  * NO PATCH CAP. run_all.py caps every slide at the cohort median
+    (``--cap-strategy median``). There is no cap here at all, so a slide
+    contributes every patch it has.
+  * NO FEATURE CACHE. ``--features-cache-dir`` does not exist here; features are
+    always re-extracted on the GPU.
+  * NO BATCH CORRECTION. Harmony/scVI are not wired in — clustering and DPT run
+    on raw per-slide PCA. (Correcting batch within a single slide would be
+    meaningless, so this is correct, not an oversight.)
+  * PER-SLIDE PCA. The PCA basis is fit on this slide alone, so component k here
+    and component k in an atlas run describe different directions. Pseudotime
+    values are not on a shared axis and must not be pooled or plotted together.
+  * SINGLE-ROOT DPT. Uses ``compute_dpt`` with a cluster-anchored root, not
+    ``compute_dpt_multi_root``'s 20 density-ranked roots with median aggregation.
+    A single slide has no cohort to rank nuclear densities against, so the
+    cluster anchor is the deliberate choice — but it means no ``pseudotime_std``
+    is produced and the origin is chosen by a different rule.
+  * ROOT DEFAULTS TO THE LOWEST-NUMBERED LEIDEN CLUSTER when ``--root-cluster``
+    is omitted. Leiden cluster IDs are arbitrary labels, so the default root is
+    effectively arbitrary. Inspect the cluster grid and pass ``--root-cluster``
+    explicitly before reading anything into the direction of the trajectory.
+  * NO MORPHOLOGICAL VALIDATION. No correlations, permutation tests, or verdict.
+  * ``diffmap`` neighbours are ``min(30, n_patches - 1)``, not ``--diffmap-neighbors``.
+
+Its purpose is qualitative: spotting per-slide trajectory structure before
+pooling. Treat the output as a picture, not a measurement.
+
+This inconsistency is recorded rather than fixed. Unifying the two config objects
+is a real refactor with real regression risk and no scientific gain, so it was
+explicitly left alone during the 2026-08 cleanup.
 """
 
 import argparse
