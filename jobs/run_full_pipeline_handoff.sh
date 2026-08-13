@@ -79,6 +79,14 @@
 #     sbatch --export=ALL,SKIP_CONVERT=1,PNG_DIR=$SCRATCH/data/MCF7_x5_cropped \
 #            jobs/run_full_pipeline_handoff.sh
 #
+#     # NDPIs somewhere else
+#     sbatch --export=ALL,NDPI_DIR=/path/to/ndpi jobs/run_full_pipeline_handoff.sh
+#
+# The NDPI filenames drive everything downstream: <stem>.ndpi becomes
+# <stem>_x5.png, and the per-section slide lists below expect stems of the form
+# 6027-4L-2M-1. A mismatch shows up as "0 slides discovered" in stage 3, not as
+# an error in stage 1, so the stem check in stage 1 is worth reading.
+#
 # ALWAYS use --export=ALL,... — a bare --export=VAR=val drops $SCRATCH from the
 # job environment and every path below resolves wrong.
 
@@ -94,7 +102,11 @@ set -euo pipefail
 
 # ── Configuration ───────────────────────────────────────────────────────────
 REPO="${REPO:-$HOME/cancer_trajectory_atlas}"
-NDPI_DIR="${NDPI_DIR:-$SCRATCH/data/MCF7_x5}"
+# NDPI source. Matches paths.json's "raw_ndpi", which is authoritative and was
+# confirmed correct on Narval 2026-08-12 (16 .ndpi present).
+# NOTE: jobs/convert_ndpi.sh points at $SCRATCH/data/MCF7_x5 instead, which does
+# NOT exist — that script is stale and would fail if submitted today.
+NDPI_DIR="${NDPI_DIR:-$SCRATCH/data/ndpi}"
 RUN_BASE="${RUN_BASE:-$SCRATCH/handoff}"
 RUN_ID="${RUN_ID:-handoff_$(date +%Y%m%d)_${SLURM_JOB_ID:-local}}"
 RUN_DIR="$RUN_BASE/$RUN_ID"
@@ -256,6 +268,34 @@ fi
 
 echo "  PNG count : $(ls "$PNG_DIR"/*.png 2>/dev/null | wc -l)"
 echo "  PNG size  : $(du -sh "$PNG_DIR" 2>/dev/null | cut -f1)"
+
+# ── Every slide the section lists name must now exist as a PNG ──────────────
+# Without this, a filename mismatch surfaces as "0 slides discovered" deep in
+# stage 3, hours later, instead of here.
+echo ""
+echo "  Verifying all 16 expected slides are present as PNGs ..."
+MISSING_PNG=0
+for SLIDE in "${SLIDES_2M_1[@]}" "${SLIDES_2M_2[@]}"; do
+    if [ ! -f "$PNG_DIR/${SLIDE}.png" ]; then
+        echo "    MISSING: ${SLIDE}.png"
+        MISSING_PNG=$((MISSING_PNG+1))
+    fi
+done
+if [ "$MISSING_PNG" -ne 0 ]; then
+    echo "  FATAL: $MISSING_PNG expected slide PNG(s) missing from $PNG_DIR"
+    echo "         Source files present in $NDPI_DIR:"
+    ls "$NDPI_DIR" 2>/dev/null | head -20
+    echo "         Expected NDPI names are <stem>.ndpi where <stem> is e.g."
+    echo "         6027-4L-2M-1 (the section lists in this script use <stem>_x5)."
+    exit 1
+fi
+echo "    OK: all 16 slides present."
+
+if [ ! -f "$PNG_DIR/slide_dimensions.json" ]; then
+    echo "  FATAL: $PNG_DIR/slide_dimensions.json missing — ratio annotations"
+    echo "         cannot be mapped to pixel space without it."
+    exit 1
+fi
 
 # ════════════════════════════════════════════════════════════════════════════
 # STAGE 2 — GeoJSON annotations to ratio-coordinate JSON (isolated)
