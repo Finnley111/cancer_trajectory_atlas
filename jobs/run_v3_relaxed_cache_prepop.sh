@@ -54,8 +54,12 @@
 
 set -euo pipefail
 mkdir -p logs
+# NOT $(dirname "$0"): sbatch copies the script to a spool dir, so $0 is not
+# the repo. SLURM_SUBMIT_DIR is unset for an interactive run, hence the fallback.
+V3_JOBS_DIR="${SLURM_SUBMIT_DIR:-$HOME/cancer_trajectory_atlas}/jobs"
+[ -f "$V3_JOBS_DIR/_v3_common.sh" ] || V3_JOBS_DIR="$HOME/cancer_trajectory_atlas/jobs"
 # shellcheck disable=SC1091
-source "$(dirname "$0")/_v3_common.sh"
+source "$V3_JOBS_DIR/_v3_common.sh"
 
 OUT_DIR="$V3B_BASE/_prepop_discard"
 
