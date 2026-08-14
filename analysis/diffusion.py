@@ -326,6 +326,12 @@ def compute_dpt_multi_root(
     adata.uns["dpt_n_roots_excluded_nonfinite"] = n_excluded
 
     pt_matrix = np.zeros((n_roots, n_patches), dtype=np.float64)
+    # How many patches each root could not reach, BEFORE clamping. Previously
+    # discarded, which made the clamp invisible: a root in a small component
+    # returns inf for everything outside it, those become that root's own maximum,
+    # and a near-constant vector enters the median. That is what produced Config
+    # B's pseudotime_std at 30% of its range, and nothing in the output said so.
+    n_nonfinite_per_root: list[int] = []
 
     for r_i, root_idx in enumerate(root_candidates):
         adata_tmp = adata.copy()
@@ -334,10 +340,25 @@ def compute_dpt_multi_root(
         pt = adata_tmp.obs["dpt_pseudotime"].values.copy()
 
         finite_mask = np.isfinite(pt)
+        n_nonfinite_per_root.append(int((~finite_mask).sum()))
         if not finite_mask.all():
             pt[~finite_mask] = pt[finite_mask].max() if finite_mask.any() else 0.0
 
         pt_matrix[r_i] = pt
+
+    nf = np.asarray(n_nonfinite_per_root, dtype=np.int64)
+    adata.uns["dpt_n_nonfinite_per_root"] = nf
+    n_roots_clamped = int((nf > 0).sum())
+    if n_roots_clamped:
+        print(f"  ⚠ CLAMPING FIRED: {n_roots_clamped}/{n_roots} root(s) could not reach "
+              f"every patch (unreached counts: min {nf[nf>0].min()}, "
+              f"max {nf.max()}, of {n_patches}).")
+        print("    Each such root's unreachable patches were set to that root's OWN "
+              "maximum, so it contributes a near-constant vector to the median and "
+              "inflates pseudotime_std. Check graph connectivity before trusting the "
+              "pseudotime: qc/graph_connectivity.py.")
+    else:
+        print(f"  All {n_roots} roots reached every patch — no clamping.")
 
     pseudotime_median = np.median(pt_matrix, axis=0)
     pseudotime_std    = np.std(pt_matrix, axis=0)

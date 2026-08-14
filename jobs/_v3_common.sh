@@ -25,6 +25,7 @@ RELAXED_CACHE="$SCRATCH/data/features_cache_v3relaxed"
 V3A_BASE="$SCRATCH/results/per_section_v3a_holeyroot"
 V3B_BASE="$SCRATCH/results/per_section_v3b_relaxed"
 V3C_BASE="$SCRATCH/results/per_section_v3c_both"
+V3D_BASE="$SCRATCH/results/per_section_v3d_overlap"
 V3_COMPARE="$SCRATCH/results/v3_root_experiment"
 
 # ── Pipeline constants — identical to jobs/run_per_section_v2.sh ─────────────

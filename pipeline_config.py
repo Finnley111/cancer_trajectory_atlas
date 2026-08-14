@@ -87,6 +87,18 @@ class PipelineConfig:
     holeyness_slide_dims: Path = None
     holeyness_percentile: float = 10.0
     holeyness_min_patches: int = 1
+    #   holeyness_assignment="overlap" — assign patches to ducts by AREA OVERLAP
+    #     instead of centre-in-polygon, which recovers the small/least-holey ducts
+    #     the centre rule structurally drops (571/2173 = 26% previously).
+    #   holeyness_max_roots_per_duct — >1 allows several roots per duct, filled
+    #     round-robin so duct diversity is maximised first.
+    #   holeyness_allow_degenerate_pool — by default a pool whose ducts all share
+    #     the threshold hole % is a hard error, because then the arbitrary UUID
+    #     tie-break, not holeyness, is picking the roots.
+    holeyness_assignment: str = "centre"
+    holeyness_overlap_min_fraction: float = 0.25
+    holeyness_max_roots_per_duct: int = 1
+    holeyness_allow_degenerate_pool: bool = False
 
     # Minimum fraction of the patch area that must lie inside an ROI polygon.
     # None = centre-point check only (original behaviour).

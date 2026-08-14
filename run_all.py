@@ -603,7 +603,8 @@ def run_pipeline(cfg: PipelineConfig):
     holeyness_root_report = None
     root_indices = None
     if cfg.root_source == "holeyness":
-        from .analysis.holeyness_roots import select_holeyness_roots
+        from .analysis.holeyness_roots import (
+            select_holeyness_roots, assert_roots_connected)
         root_indices, holeyness_root_report = select_holeyness_roots(
             coords=all_coords,
             slide_ids=slide_ids,
@@ -615,7 +616,15 @@ def run_pipeline(cfg: PipelineConfig):
             percentile=cfg.holeyness_percentile,
             min_patches_per_duct=cfg.holeyness_min_patches,
             patch_size=cfg.patch_size,
+            assignment=cfg.holeyness_assignment,
+            overlap_min_fraction=cfg.holeyness_overlap_min_fraction,
+            max_roots_per_duct=cfg.holeyness_max_roots_per_duct,
+            allow_degenerate_pool=cfg.holeyness_allow_degenerate_pool,
         )
+        # Topology gate. Raises if the roots straddle disconnected components —
+        # the condition that makes multi-root DPT clamp and collapse. Runs BEFORE
+        # DPT so the job fails in seconds rather than after the full root loop.
+        holeyness_root_report["topology"] = assert_roots_connected(adata, root_indices)
         io.save_json(holeyness_root_report, output_dir / "holeyness_roots.json")
         print(f"  Holeyness root report: {output_dir / 'holeyness_roots.json'}")
 
@@ -933,6 +942,34 @@ Examples:
                              "the low-holeyness candidate pool. Taken over ducts, not "
                              "patches, so large ducts do not drag the threshold. "
                              "(default: 10.0)")
+    parser.add_argument("--holeyness-assignment", type=str, default="centre",
+                        choices=["centre", "overlap"],
+                        help="How patches inherit a duct. 'centre' (default) requires "
+                             "the patch centre inside the polygon — this structurally "
+                             "drops ducts smaller or narrower than a 112px patch, which "
+                             "excluded 571/2173 ducts (26%%) previously, systematically "
+                             "the smallest and LEAST holey, i.e. exactly the population "
+                             "a low-holeyness anchor needs. 'overlap' assigns to the "
+                             "duct covering the largest area of the patch, subject to "
+                             "--holeyness-overlap-min-fraction. Requires shapely.")
+    parser.add_argument("--holeyness-overlap-min-fraction", type=float, default=0.25,
+                        help="Minimum fraction of the PATCH's area a duct must cover to "
+                             "claim it. Only used with --holeyness-assignment overlap. "
+                             "(default: 0.25)")
+    parser.add_argument("--holeyness-max-roots-per-duct", type=int, default=1,
+                        help="Maximum roots drawn from any single duct. Filled "
+                             "round-robin, so every duct contributes its 1st root "
+                             "before any duct contributes a 2nd — duct diversity is "
+                             "maximised first. Raising this trades diversity for a "
+                             "tighter anchor. (default: 1)")
+    parser.add_argument("--holeyness-allow-degenerate-pool", action="store_true",
+                        help="Proceed even when every duct in the candidate pool has "
+                             "the SAME hole %% as the threshold. By default that is a "
+                             "hard error, because 'lowest holeyness' then orders "
+                             "nothing and the arbitrary UUID tie-break picks the roots "
+                             "— making the anchor 'an arbitrary N of the zero-hole "
+                             "ducts' rather than 'the least holey ducts'. Set this only "
+                             "if you intend that, and say so in the writeup.")
     parser.add_argument("--holeyness-min-patches", type=int, default=1,
                         help="Minimum assigned patches for a duct to be a root "
                              "candidate. Default 1: a higher value would exclude more "
@@ -979,6 +1016,18 @@ Examples:
                 parser.error(f"{flag} path not found: {val}")
         if not 0.0 < args.holeyness_percentile < 100.0:
             parser.error("--holeyness-percentile must be strictly between 0 and 100")
+        if args.holeyness_max_roots_per_duct < 1:
+            parser.error("--holeyness-max-roots-per-duct must be >= 1")
+        if args.holeyness_assignment == "overlap":
+            if not 0.0 < args.holeyness_overlap_min_fraction <= 1.0:
+                parser.error("--holeyness-overlap-min-fraction must be in (0, 1]")
+            try:
+                import shapely  # noqa: F401
+            except ImportError:
+                parser.error(
+                    "--holeyness-assignment overlap requires shapely, which is not "
+                    "importable. It is in requirements.txt; install it into "
+                    "~/envs/atlas. Failing now rather than hours into the run.")
     if args.relaxed_tissue_filters and args.features_cache_dir is not None:
         print("\n  NOTE: --relaxed-tissue-filters changes the patch count, so the "
               "feature cache\n        at "
@@ -1023,6 +1072,10 @@ Examples:
         holeyness_slide_dims=args.holeyness_slide_dims,
         holeyness_percentile=args.holeyness_percentile,
         holeyness_min_patches=args.holeyness_min_patches,
+        holeyness_assignment=args.holeyness_assignment,
+        holeyness_overlap_min_fraction=args.holeyness_overlap_min_fraction,
+        holeyness_max_roots_per_duct=args.holeyness_max_roots_per_duct,
+        holeyness_allow_degenerate_pool=args.holeyness_allow_degenerate_pool,
         root_cluster=str(args.root_cluster) if args.root_cluster is not None else None,
         n_roots=args.n_roots,
         root_metric=args.root_metric,
