@@ -44,6 +44,25 @@ THE TWO HYPOTHESES IT SEPARATES
       2M-1 result built on it — Phase 2's re-anchoring, Phase 3's Task C — is
       describing an ordering by a quantity with no pixel referent.
 
+ANSWERED, first real run (2026-08-19): the FIRST hypothesis, decisively, and
+2M-1 is the STRONGER of the two — rho = +0.9202 (CI [+0.901, +0.935], 8/8 slides,
+partial given area +0.9022) against 2M-2's +0.7930. The annotation has a real
+pixel referent in both sections.
+
+Task 3's sign-flip is explained by Task C rather than by the annotation. Measured
+white is a median of 0.95% of duct area in 2M-1 and 4.92% in 2M-2, so inside a
+112 px patch centred on a duct the holes contribute ~1% of pixels and
+``h_intensity_wholepatch`` is dominated by tissue staining, not by the hole. The
+signal was real and simply far below patch-level stain variation. Task B rules
+out the other candidate explanation: zero-patch ducts correlate just as well
+(+0.9078 vs +0.9157 in 2M-1, +0.8306 vs +0.7753 in 2M-2), so the
+centre-in-polygon exclusion does not bias this relationship.
+
+What the annotation is NOT is calibrated: it overstates by ~3.5-3.8x in BOTH
+sections (3.62% annotated vs 0.95% measured in 2M-1; 16.91% vs 4.92% in 2M-2),
+and rho climbs monotonically as the white threshold falls. The annotator counts
+PALE pixels, not near-white ones. Ranking valid, magnitude not.
+
 WHAT IS MEASURED, EXACTLY
 -------------------------
 ``frac_pixels_white`` is reused byte-for-byte from
@@ -82,7 +101,9 @@ WHAT IT REPORTS BEYOND THE HEADLINE CORRELATION
           one scale. A high rho with a large systematic offset means the
           annotation ranks ducts correctly but does not measure what it names.
   TASK D  threshold sensitivity. 220 is a convention; rho is recomputed across
-          200-240 so a conclusion that depends on the threshold is visible.
+          150-240 so a conclusion that depends on the threshold is visible. The
+          sweep was extended downward after the first run showed rho still
+          climbing at its lower edge.
   TASK E  the duct-area confound, since bigger ducts may simply have more lumen.
 
 READ-ONLY. Reads the annotations, the measurement exports and the slide PNGs.
@@ -106,7 +127,12 @@ from .holeyness import (
 from .holeyroot_duct_checks import _safe_rho, _json_default
 from ..diagnostics.inspect_roots_v3 import WHITE_THRESH
 
-THRESHOLDS = [200, 210, 220, 230, 240]
+# Extended DOWNWARD after the first real run: rho rose monotonically as the
+# threshold fell (2M-1 0.7801 at 240 -> 0.9728 at 200; 2M-2 0.5228 -> 0.9142),
+# so 200 was the edge of the sweep rather than an optimum. The annotator
+# evidently counts PALE pixels, not only near-white ones, and where that
+# correlation peaks is a description of what 'hole' means to them.
+THRESHOLDS = [150, 160, 170, 180, 190, 200, 210, 220, 230, 240]
 N_BOOT_DEFAULT = 2000
 N_PERM_DEFAULT = 2000
 MIN_MASK_PIXELS = 100          # below this a duct's white fraction is noise
@@ -490,9 +516,10 @@ def run_section(section: str, export: Path, ann_dir: Path, dims: Path,
         "task_d_threshold_sensitivity": d,
         "task_e_area_confound": e,
         "verdict": build_verdict(section, a, b, e),
-        "per_duct": df.drop(columns=[c for c in df.columns
-                                     if c.startswith("white_frac_")
-                                     and c != col]).to_dict(orient="list"),
+        # ALL threshold columns are kept in the per-duct CSV. Dropping the
+        # non-default ones meant the sweep could only ever be explored by
+        # re-decoding 16 whole-slide PNGs; keeping them makes it a spreadsheet.
+        "per_duct": df.to_dict(orient="list"),
     }
 
 
