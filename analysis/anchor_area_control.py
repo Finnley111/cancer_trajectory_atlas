@@ -162,10 +162,106 @@ def _pct(values: np.ndarray, q) -> float:
     return float(np.percentile(v, q)) if v.size else float("nan")
 
 
+# ── row-order verification between adata and results.csv ─────────────────────
+
+def _verify_row_alignment(adata, results: pd.DataFrame, path: Path) -> dict:
+    """Prove results.csv is in adata ROW ORDER before trusting it for coordinates.
+
+    run_all.py writes both from the same arrays in the same block, so they agree
+    by construction — but "by construction" is exactly the kind of assumption
+    that survives a refactor and then silently attaches every patch to the wrong
+    duct. Root indices from ``adata.uns['dpt_root_candidates']`` index INTO this
+    frame, so a shifted row order would produce a completely different anchor and
+    entirely plausible-looking numbers.
+
+    The check uses every column the two files share. ``pseudotime`` and the
+    morphological features are continuous and effectively unique per patch, so
+    an order mismatch cannot survive them; ``slide_id`` is categorical and
+    partitions the rows into 8 blocks, which catches a block-level permutation
+    that continuous columns might tolerate at low precision.
+
+    Raises rather than warning. There is no safe degraded mode here.
+    """
+    if len(results) != adata.n_obs:
+        raise ValueError(
+            f"{path} has {len(results)} rows but the h5ad has {adata.n_obs}. These "
+            "are from different runs; root indices from the h5ad do not address "
+            "this frame."
+        )
+
+    obs = adata.obs
+    shared = [c for c in results.columns if c in obs.columns]
+    checked: dict[str, str] = {}
+    mismatches: list[str] = []
+
+    for c in shared:
+        a = obs[c].values
+        b = results[c].values
+        try:
+            af = np.asarray(a, dtype=float)
+            bf = np.asarray(b, dtype=float)
+        except (TypeError, ValueError):
+            # categorical / string columns (slide_id is stored as str in obs and
+            # as int in the csv, so compare their string forms)
+            same = (pd.Series(a).astype(str).values
+                    == pd.Series(b).astype(str).values)
+            n_bad = int((~same).sum())
+            checked[c] = f"categorical, {len(same) - n_bad}/{len(same)} equal"
+            if n_bad:
+                mismatches.append(f"{c}: {n_bad} rows differ")
+            continue
+
+        nan_a, nan_b = np.isnan(af), np.isnan(bf)
+        if not np.array_equal(nan_a, nan_b):
+            mismatches.append(f"{c}: nan masks differ")
+            checked[c] = "nan mask mismatch"
+            continue
+        ok = ~nan_a
+        if ok.sum() == 0:
+            checked[c] = "all nan, uninformative"
+            continue
+        if np.unique(af[ok]).size < 2:
+            # A constant column agrees under every permutation, so it proves
+            # nothing about row order. Counted as checked but NOT as evidence.
+            checked[c] = "constant, uninformative"
+            continue
+        close = np.allclose(af[ok], bf[ok], rtol=1e-5, atol=1e-8)
+        checked[c] = ("numeric, identical" if close else "numeric, DIFFERS")
+        if not close:
+            n_bad = int((~np.isclose(af[ok], bf[ok], rtol=1e-5, atol=1e-8)).sum())
+            mismatches.append(f"{c}: {n_bad}/{int(ok.sum())} values differ")
+
+    informative = [c for c, v in checked.items() if "uninformative" not in v]
+    if not informative:
+        raise ValueError(
+            f"{path} and the h5ad share no column that could confirm row order "
+            f"(shared columns: {shared}). Refusing to assume alignment — the "
+            "coordinates would be attached to arbitrary patches."
+        )
+    if mismatches:
+        raise ValueError(
+            f"{path} is NOT in adata row order. Disagreements: "
+            + "; ".join(mismatches)
+            + ". run_all.py writes results.csv and adata_full.h5ad from the same "
+              "arrays, so this means the two files are from different runs. Every "
+              "root index would address the wrong patch."
+        )
+
+    print(f"  row alignment verified against {path.name}: "
+          f"{len(informative)} shared column(s) agree "
+          f"({', '.join(informative[:6])}{'...' if len(informative) > 6 else ''})")
+    return {"n_rows": int(len(results)), "columns_checked": checked,
+            "n_informative_columns": len(informative)}
+
+
 # ── duct context: everything the root rules and the duct-level rhos need ──────
 
 class DuctContext:
     """Patch->duct assignment and per-duct metadata, in adata ROW ORDER.
+
+    Coordinates come from the run's results.csv, not from adata.obs, which never
+    carries them; see the note in __init__ for why, and _verify_row_alignment for
+    the check that makes indexing one with the other's root indices safe.
 
     Built with the SAME loaders and the SAME centre-in-polygon assignment that
     holeyness.py, holeyness_roots.py and holeyroot_compare.py use, so every
@@ -176,18 +272,32 @@ class DuctContext:
     the comparison to Phase 2 meaningless. It is reported, not fixed.
     """
 
-    def __init__(self, adata, export: Path, ann_dir: Path, dims: Path,
-                 slide_list: Path, patch_size: int):
-        obs = adata.obs
-        missing = [c for c in KEY if c not in obs.columns]
-        if missing:
-            raise KeyError(
-                f"adata.obs is missing {missing}. The patch->duct assignment must "
-                "run in adata ROW ORDER so that root indices refer to the same "
-                "patches sc.tl.dpt will see. Refusing to guess an ordering."
+    def __init__(self, adata, run_dir: Path, export: Path, ann_dir: Path,
+                 dims: Path, slide_list: Path, patch_size: int):
+        # WHERE THE COORDINATES LIVE, AND WHY NOT IN adata.obs
+        # ----------------------------------------------------
+        # run_all.py builds the AnnData from X_pca and adds only cluster,
+        # slide_id, mouse_id, section_number, pseudotime, pseudotime_std and the
+        # morphological features (run_all.py:664). The patch COORDINATES are
+        # never written to obs — they go to results.csv, built in the same block
+        # from the same all_coords / slide_ids arrays (run_all.py:718), so the
+        # two files are in identical row order by construction.
+        #
+        # That invariant is what diagnostics/inspect_roots_v3.py already relies
+        # on when it indexes results.csv positionally with root indices read from
+        # the h5ad. This module relies on it too, and VERIFIES it below rather
+        # than assuming it: a silent row-order mismatch would attach every patch
+        # to the wrong duct while still producing entirely plausible numbers.
+        results_csv = Path(run_dir) / "results.csv"
+        if not results_csv.exists():
+            raise FileNotFoundError(
+                f"{results_csv} not found. The patch coordinates are not in "
+                "adata.obs — run_all.py writes them only to results.csv — so the "
+                "patch->duct assignment cannot be built from the h5ad alone."
             )
+        results = pd.read_csv(results_csv)
+        self.row_alignment = _verify_row_alignment(adata, results, results_csv)
 
-        self._feature_cache: dict | None = None
         slides = load_slide_list(slide_list)
         meas = parse_measurement_export(export, slides)
         polys = load_duct_polygons(ann_dir, slides, load_slide_dimensions(dims))
@@ -199,11 +309,27 @@ class DuctContext:
                 "that the annotation dir is the RATIO directory."
             )
 
+        missing = [c for c in KEY if c not in results.columns]
+        if missing:
+            raise KeyError(
+                f"{results_csv} is missing {missing} — assign_patches_to_ducts "
+                "needs all three and there is no other source for them.")
         self.results_df = pd.DataFrame({
-            "x": obs["x"].values.astype(float),
-            "y": obs["y"].values.astype(float),
-            "slide_name": obs["slide_name"].astype(str).values,
+            "x": results["x"].values.astype(float),
+            "y": results["y"].values.astype(float),
+            "slide_name": results["slide_name"].astype(str).values,
         })
+        # aggregate_per_duct's other inputs come from the SAME csv, not from
+        # adata.obs, so these duct-level numbers are produced by exactly the
+        # inputs holeyroot_compare.duct_level used in Phase 2.
+        self._feature_cache = {}
+        for feat in AGG_FEATURES:
+            if feat not in results.columns:
+                raise KeyError(
+                    f"{results_csv} has no '{feat}' column — "
+                    "holeyness.aggregate_per_duct requires it and this module "
+                    "reuses that function rather than reimplementing it.")
+            self._feature_cache[feat] = results[feat].values.astype(float)
         self.coords = self.results_df[["x", "y"]].values
         self.patch_size = int(patch_size)
 
@@ -277,32 +403,12 @@ class DuctContext:
     def per_duct(self, pseudotime: np.ndarray) -> pd.DataFrame:
         """Median-aggregate a pseudotime vector to ducts via holeyness.py's own
         aggregator, so these rhos and Phase 1/2's come from identical code."""
-        if self._feature_cache is None:
-            raise RuntimeError(
-                "attach_features() must run before per_duct(): "
-                "holeyness.aggregate_per_duct reads FEATURES_TO_AGGREGATE "
-                "(pseudotime, nuclear_density, packing_irregularity) and this "
-                "module reuses that function rather than reimplementing it."
-            )
         df = self.results_df.copy()
         df["duct_id"] = self.duct_id
         df["pseudotime"] = np.asarray(pseudotime, dtype=float)
         for feat in AGG_FEATURES:
             df[feat] = self._feature_cache[feat]
         return aggregate_per_duct(df, self.duct_table, np.nanmedian, "median")
-
-    def attach_features(self, adata) -> None:
-        """Cache the obs columns aggregate_per_duct expects."""
-        self._feature_cache = {}
-        for feat in AGG_FEATURES:
-            if feat not in adata.obs.columns:
-                raise KeyError(
-                    f"adata.obs['{feat}'] missing — holeyness.aggregate_per_duct "
-                    "requires it and this module reuses that function unmodified "
-                    "rather than reimplementing the aggregation."
-                )
-            self._feature_cache[feat] = adata.obs[feat].values.astype(float)
-
 
 def duct_rhos(ctx: DuctContext, pseudotime: np.ndarray) -> dict:
     """The Phase 2 duct-level block, recomputed against an arbitrary axis."""
@@ -660,8 +766,25 @@ def task_e_v2_root_repair(adata_v2, holeyroot_pt_aligned: np.ndarray,
 
 # ── alignment between two run trees ──────────────────────────────────────────
 
-def align_to(source_obs, target_obs) -> np.ndarray:
+def load_aligned_results(adata, run_dir: Path) -> pd.DataFrame:
+    """results.csv for a run, verified to be in that run's adata row order."""
+    path = Path(run_dir) / "results.csv"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found. Patch coordinates live only in results.csv "
+            "(run_all.py:718), never in adata.obs, so cross-run alignment cannot "
+            "be established from the h5ad alone.")
+    results = pd.read_csv(path)
+    _verify_row_alignment(adata, results, path)
+    return results
+
+
+def align_to(source: pd.DataFrame, target: pd.DataFrame) -> np.ndarray:
     """Row indices mapping source order -> target order, keyed on (slide, x, y).
+
+    Both frames are results.csv tables that ``_verify_row_alignment`` has already
+    tied to their own run's adata row order, so a permutation computed here is
+    valid for the h5ad arrays too.
 
     Phase 2 verified the two runs hold identical patch SETS, but nothing
     guarantees identical row ORDER, and a silent misalignment would corrupt every
@@ -671,7 +794,7 @@ def align_to(source_obs, target_obs) -> np.ndarray:
         return list(zip(o["slide_name"].astype(str).values,
                         o["x"].values.astype(np.int64),
                         o["y"].values.astype(np.int64)))
-    src, tgt = key(source_obs), key(target_obs)
+    src, tgt = key(source), key(target)
     if set(src) != set(tgt):
         raise ValueError(
             f"Patch sets differ between runs: {len(set(src) - set(tgt))} only in "
@@ -693,8 +816,8 @@ def run_section(section: str, hr_dir: Path, v2_dir: Path, export: Path,
     print("=" * 78)
 
     adata_hr, _, _ = load_run(hr_dir)
-    ctx = DuctContext(adata_hr, export, ann_dir, dims, slide_list, patch_size)
-    ctx.attach_features(adata_hr)
+    ctx = DuctContext(adata_hr, hr_dir, export, ann_dir, dims, slide_list,
+                      patch_size)
 
     dc_info = pick_diffusion_component(adata_hr)
     dm = np.asarray(adata_hr.obsm["X_diffmap"], dtype=float)
@@ -786,7 +909,8 @@ def run_section(section: str, hr_dir: Path, v2_dir: Path, export: Path,
     # TASK E
     print("\n=== TASK E — v2 root repair ===")
     adata_v2, _, _ = load_run(v2_dir)
-    idx = align_to(adata_v2.obs, adata_hr.obs)
+    results_v2 = load_aligned_results(adata_v2, v2_dir)
+    idx = align_to(results_v2, ctx.results_df)
     hr_pt_in_v2_order = hr_pt[idx]
     dc_v2 = pick_diffusion_component(adata_v2)
     dm_v2 = np.asarray(adata_v2.obsm["X_diffmap"], dtype=float)

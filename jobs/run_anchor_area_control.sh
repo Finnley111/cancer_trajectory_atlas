@@ -69,8 +69,14 @@ case "$OUT_DIR" in
 esac
 
 MISSING=0
+# results.csv is required alongside the h5ad. run_all.py writes the patch
+# COORDINATES only to the csv (run_all.py:718) and never into adata.obs, so the
+# patch->duct assignment cannot be built from the h5ad alone. The module verifies
+# the csv is in adata row order before indexing one with the other's root indices.
 for p in "$V2_BASE/atlas_2M-1/adata_full.h5ad" "$V2_BASE/atlas_2M-2/adata_full.h5ad" \
          "$HR_BASE/atlas_2M-1/adata_full.h5ad" "$HR_BASE/atlas_2M-2/adata_full.h5ad" \
+         "$V2_BASE/atlas_2M-1/results.csv" "$V2_BASE/atlas_2M-2/results.csv" \
+         "$HR_BASE/atlas_2M-1/results.csv" "$HR_BASE/atlas_2M-2/results.csv" \
          "$EXPORT_2M1" "$EXPORT_2M2" "$ANN_DIR" "$SLIDE_DIMS" \
          "$REPO/jobs/slides_section1.txt" "$REPO/jobs/slides_section2.txt"; do
     echo -n "  $p : "; if [ -e "$p" ]; then echo "ok"; else echo "NOT FOUND"; MISSING=1; fi
