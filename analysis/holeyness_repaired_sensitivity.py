@@ -93,6 +93,19 @@ def _json_default(o):
     return str(o)
 
 
+def _tree_label(p) -> str:
+    """`<run tree>/<section dir>` for a results.csv path.
+
+    The baseline gate compares two files that share a parent NAME —
+    per_section/atlas_2M-1/results.csv and per_section_v2/atlas_2M-1/results.csv
+    — so labelling by parent alone printed "atlas_2M-1 vs atlas_2M-1" and left
+    the reader unable to tell what was compared. Two components disambiguate the
+    run trees, which is the whole point of the gate.
+    """
+    q = Path(p)
+    return f"{q.parent.parent.name}/{q.parent.name}"
+
+
 def _rho(x, y):
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -397,8 +410,8 @@ def write_report(res: dict, path: Path) -> None:
     add(f"**Verdict:** {nc['verdict']}\n")
     g = nc.get("baseline_gate")
     if g:
-        add(f"- baseline gate: `{Path(g['csv_a']).parent.name}` vs "
-            f"`{Path(g['csv_b']).parent.name}` pseudotime — identical: "
+        add(f"- baseline gate: `{_tree_label(g['csv_a'])}` vs "
+            f"`{_tree_label(g['csv_b'])}` pseudotime — identical: "
             f"**{g.get('identical')}**"
             + (f", max abs difference {g['max_abs_difference']:.3g}"
                if g.get("max_abs_difference") is not None else "")
