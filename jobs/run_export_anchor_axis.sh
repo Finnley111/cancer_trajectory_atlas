@@ -1,8 +1,35 @@
 #!/bin/bash
-# Persist the AREA-STRATIFIED anchor's pseudotime as a run dir other tools read.
+# Persist an alternative-anchor pseudotime as a run dir other tools read.
 #
-# WHY
-# ---
+#   ANCHOR=area_stratified        (default) re-anchors the HOLEYROOT run
+#   ANCHOR=area_matched_surrogate its size-matched control
+#   ANCHOR=v2_repaired            repairs the DENSITY-rooted v2 run
+#
+# The source tree follows the anchor automatically; override with SOURCE_BASE.
+#
+# WHY v2_repaired
+# ---------------
+# The holey-ness validation can only be an EXTERNAL check on an axis that was not
+# anchored on holey-ness -- on the holeyroot and area-stratified axes
+# rho(pt, hole_pct) is circular by construction. So that validation has to live
+# on the density-rooted axis, which is exactly the axis whose 2M-2 roots are
+# degenerate: 20 patches at nuclear_density exactly 0.0, none inside any Tumor
+# annotation, three ordering the manifold backwards, pseudotime_std at 27.7% of
+# range against 5.0% in 2M-1.
+#
+# v2_repaired therefore REPAIRS rather than replaces: v2's own roots minus the
+# discordant ones, so the anchor stays nuclear_density and hole_pct stays
+# external. Gated against anchor_area_control Task E's recorded repair (drop
+# count and resulting spread) rather than Task C's correlations.
+#
+# TWO CAVEATS. The drop rule was fixed in advance but applied AFTER the
+# discordance was observed, so results on that axis are a sensitivity analysis
+# unless pre-declared primary. And the rule keeps whichever orientation MOST
+# roots share -- it removes minority disagreement, and cannot tell a majority of
+# bad roots from a majority of good ones.
+#
+# WHY area_stratified
+# -------------------
 # anchor_area_control showed the holeyroot anchor is duct-size-extreme (20/20
 # root ducts below the eligible median in both sections) and that its
 # rho(pt, duct area) is entirely reproduced by size-matched anchors that know
@@ -58,7 +85,18 @@ mkdir -p logs
 REPO="$HOME/cancer_trajectory_atlas"
 
 HR_BASE="$SCRATCH/results/per_section_holeyroot"
+V2_BASE="$SCRATCH/results/per_section_v2"
 ANCHOR="${ANCHOR:-area_stratified}"
+
+# The source tree depends on the anchor. area_stratified and
+# area_matched_surrogate re-anchor the HOLEYROOT run; v2_repaired instead repairs
+# the DENSITY-rooted v2 run, because that is the only axis on which hole_pct is
+# still an EXTERNAL validator -- on any holeyness-anchored axis the holeyness
+# validation is circular by construction.
+case "$ANCHOR" in
+    v2_repaired) SRC_BASE="${SOURCE_BASE:-$V2_BASE}" ;;
+    *)           SRC_BASE="${SOURCE_BASE:-$HR_BASE}" ;;
+esac
 OUT_DIR="$SCRATCH/results/holeyroot_experiment/anchor_axes/$ANCHOR"
 EXPECT_JSON="$SCRATCH/results/holeyroot_experiment/anchor_area_control/anchor_area_control.json"
 
@@ -72,12 +110,12 @@ S2="$REPO/jobs/slides_section2.txt"
 echo "============================================================================"
 echo "  Export anchor axis : $ANCHOR"
 echo "  Job ID : ${SLURM_JOB_ID:-local}"
-echo "  Source : $HR_BASE"
+echo "  Source : $SRC_BASE"
 echo "  Output : $OUT_DIR   (NEW)"
 echo "============================================================================"
 
 case "$OUT_DIR" in
-    "$HR_BASE"|"$HR_BASE"/*|"$SCRATCH/results/per_section"/*|"$SCRATCH/results/per_section_v2"/*)
+    "$HR_BASE"|"$HR_BASE"/*|"$V2_BASE"|"$V2_BASE"/*|"$SCRATCH/results/per_section"/*)
         echo "ERROR: output is inside a protected run tree."; exit 1;;
 esac
 
@@ -89,8 +127,8 @@ if [ -n "$(ls -A "$OUT_DIR" 2>/dev/null)" ] && [ "${FORCE:-0}" != "1" ]; then
 fi
 
 MISSING=0
-for p in "$HR_BASE/atlas_2M-1/adata_full.h5ad" "$HR_BASE/atlas_2M-2/adata_full.h5ad" \
-         "$HR_BASE/atlas_2M-1/results.csv" "$HR_BASE/atlas_2M-2/results.csv" \
+for p in "$SRC_BASE/atlas_2M-1/adata_full.h5ad" "$SRC_BASE/atlas_2M-2/adata_full.h5ad" \
+         "$SRC_BASE/atlas_2M-1/results.csv" "$SRC_BASE/atlas_2M-2/results.csv" \
          "$EXPORT_2M1" "$EXPORT_2M2" "$ANN_DIR" "$SLIDE_DIMS" "$S1" "$S2"; do
     echo -n "  $p : "; if [ -e "$p" ]; then echo "ok"; else echo "NOT FOUND"; MISSING=1; fi
 done
@@ -120,7 +158,7 @@ cd ~
 
 python -m cancer_trajectory_atlas.analysis.export_anchor_axis \
     --sections         2M-1 2M-2 \
-    --run-dirs         "$HR_BASE/atlas_2M-1" "$HR_BASE/atlas_2M-2" \
+    --run-dirs         "$SRC_BASE/atlas_2M-1" "$SRC_BASE/atlas_2M-2" \
     --exports          "$EXPORT_2M1"         "$EXPORT_2M2" \
     --slide-lists      "$S1"                 "$S2" \
     --annotation-dir   "$ANN_DIR" \
@@ -135,11 +173,34 @@ echo "  EXPORT COMPLETE"
 echo "============================================================================"
 ls -1 "$OUT_DIR"/atlas_*/ 2>/dev/null
 echo ""
-echo "  Next, run the trajectory tests against this axis:"
-echo "    RUN_BASE=$OUT_DIR OUT_SUFFIX=_${ANCHOR} sbatch jobs/run_eccentricity_check.sh"
-echo "    RUN_BASE=$OUT_DIR OUT_SUFFIX=_${ANCHOR} sbatch jobs/run_eccentricity_within_slide.sh"
-echo ""
-echo "  If DIRECTIONAL IN MORPHOLOGY does NOT survive on this axis, the trajectory"
-echo "  verdict was an artifact of a duct-size-extreme anchor. If it does survive,"
-echo "  the verdict is anchor-robust — which still says nothing about whether the"
-echo "  anchor is correct."
+if [ "$ANCHOR" = "v2_repaired" ]; then
+    echo "  This axis keeps the DENSITY anchor, so hole_pct is still an EXTERNAL"
+    echo "  validator on it. The point of exporting it is to re-run the holey-ness"
+    echo "  validation on an axis that is both sound and independently validatable:"
+    echo ""
+    echo "    python -m cancer_trajectory_atlas.analysis.holeyness \\"
+    echo "        --section 2M-2 --results-csv $OUT_DIR/atlas_2M-2/results.csv \\"
+    echo "        --output-dir \$SCRATCH/results/holeyness/2M-2_repaired  ..."
+    echo ""
+    echo "  then re-run jobs/run_holeyness_section_comparison.sh against the new"
+    echo "  per-duct tables."
+    echo ""
+    echo "  DECIDE BEFORE RUNNING, not after: is the repaired-axis result your"
+    echo "  PRIMARY analysis or a SENSITIVITY check? The drop rule was fixed in"
+    echo "  advance but applied after the discordance was seen, and this is a"
+    echo "  second look at a question already answered on the unrepaired axis."
+    echo "  Read anchor_axis.json -> anchor_rule.post_hoc_caveat."
+    echo ""
+    echo "  Also check anchor_rule.identical_to_source. In 2M-1 no root was"
+    echo "  discordant, so the repaired axis there IS the source axis; only 2M-2"
+    echo "  actually changes."
+else
+    echo "  Next, run the trajectory tests against this axis:"
+    echo "    RUN_BASE=$OUT_DIR OUT_SUFFIX=_${ANCHOR} sbatch jobs/run_eccentricity_check.sh"
+    echo "    RUN_BASE=$OUT_DIR OUT_SUFFIX=_${ANCHOR} sbatch jobs/run_eccentricity_within_slide.sh"
+    echo ""
+    echo "  If DIRECTIONAL IN MORPHOLOGY does NOT survive on this axis, the trajectory"
+    echo "  verdict was an artifact of a duct-size-extreme anchor. If it does survive,"
+    echo "  the verdict is anchor-robust — which still says nothing about whether the"
+    echo "  anchor is correct."
+fi
