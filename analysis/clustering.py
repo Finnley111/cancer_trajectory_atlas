@@ -1,6 +1,6 @@
 """Morphological clustering helpers for PCA, UMAP, and graph-based labels.
 
-THREE SEPARATE NEIGHBOUR GRAPHS — read this before comparing them
+THREE SEPARATE NEIGHBOUR GRAPHS. Read this before comparing them.
 =================================================================
 The pipeline builds three independent k-NN graphs over the *same* matrix
 (``X_embed``: PCA output, optionally Harmony/scVI-corrected). They use different
@@ -16,7 +16,7 @@ caused confusion before, so the full picture:
     -> DPT, PAGA      (analysis/diffusion.py)                      (analysis/diffusion.py)
 
 The k=15/cosine pair for Leiden and the k=30/cosine pair for UMAP are the
-*function defaults* in this module — ``run_all.py`` calls ``cluster(X_embed,
+*function defaults* in this module. ``run_all.py`` calls ``cluster(X_embed,
 method=..., resolution=...)`` and ``run_umap(X_embed)`` without passing
 ``n_neighbors`` or ``metric``, so the defaults here are the operative values and
 there is no CLI flag that changes them.
@@ -85,7 +85,7 @@ def fit_pca(
     of PCA components. Anything comparing two runs component-by-component must
     check the widths match first.
 
-    ``max_components`` is dead in practice — ``run_all.py`` calls
+    ``max_components`` is dead in practice. ``run_all.py`` calls
     ``fit_pca(features, variance_target=0.95)`` and never supplies it, so the
     re-fit branch below has never run in any pipeline invocation. It is kept for
     direct API use.
@@ -129,7 +129,7 @@ def run_umap(
 
     Its k=30 matches the diffusion map's k by coincidence, not by design, and its
     metric (cosine) does not match the diffusion map's (euclidean). Neither value
-    is reachable from the CLI — ``run_all.py`` calls ``run_umap(X_embed)`` bare.
+    is reachable from the CLI. ``run_all.py`` calls ``run_umap(X_embed)`` bare.
 
     Returns ``(None, None)`` when umap-learn is missing; callers must handle that,
     and ``run_all.py`` does by guarding every plot on ``if X_umap is not None``.
@@ -182,7 +182,7 @@ def cluster_leiden(
 ) -> np.ndarray:
     """Run Leiden clustering on a KNN graph built in PCA space.
 
-    ``n_neighbors`` and ``metric`` are NOT plumbed to the CLI — ``run_all.py``
+    ``n_neighbors`` and ``metric`` are NOT plumbed to the CLI. ``run_all.py``
     passes only ``resolution``, so the k=15 / cosine defaults here are what every
     published run used. ``resolution`` is the exception: its default of 1.0 is
     never used in practice, since ``run_all.py`` always supplies
@@ -190,14 +190,14 @@ def cluster_leiden(
 
     Graph construction, in order:
 
-    1. ``kneighbors_graph(mode="distance")`` gives a DIRECTED k-NN graph — each
-       node points at its own 15 nearest neighbours.
+    1. ``kneighbors_graph(mode="distance")`` gives a DIRECTED k-NN graph, in
+       which each node points at its own 15 nearest neighbours.
     2. Distances become similarities through a Gaussian kernel,
        ``exp(-d^2 / 2*sigma^2)``, with ``sigma`` the median edge distance. Sigma
        is therefore data-dependent: it is recomputed per run and is not a fixed
        scale, so similarity values are not comparable across runs.
     3. The graph is handed to igraph as UNDIRECTED, which unions the directed
-       edges — an edge survives if either endpoint listed the other. ``simplify``
+       edges, so an edge survives if either endpoint listed the other. ``simplify``
        then collapses duplicates keeping the maximum weight, and drops self-loops.
 
     One edge case: a distance of exactly 0 (identical feature vectors) is an

@@ -54,7 +54,7 @@ def permutation_test(
     seed: int = 42,
 ) -> Dict[str, Dict]:
     """
-    Permutation test for each feature–pseudotime correlation.
+    Permutation test for each feature-versus-pseudotime correlation.
 
     Shuffles pseudotime labels n_permutations times and computes null
     distribution of |rho|. Reports empirical p-value.
@@ -169,7 +169,7 @@ def spatial_depth_correlation(
 
     ``run_all.py`` never passes ``roi_polygon``, so the fallback branch is the
     only one that has ever executed. That fallback computes "depth" as the
-    distance from each patch to ``coords.mean(axis=0)`` — the mean of ALL patch
+    distance from each patch to ``coords.mean(axis=0)``, the mean of ALL patch
     coordinates POOLED ACROSS EVERY SLIDE in the run.
 
     Patch coordinates are per-slide pixel offsets, each slide having its own
@@ -186,9 +186,9 @@ def spatial_depth_correlation(
     unchanged because fixing it would alter validation.json.
 
     A meaningful version would compute depth per slide, relative to that slide's
-    own ROI boundary — which is what the ``roi_polygon`` branch does, and why it
-    exists. That branch also hardcodes ``coords + 56`` as the patch centre, i.e.
-    half of patch_size=112; it would be wrong for any other patch size.
+    own ROI boundary. That is what the ``roi_polygon`` branch does, and why it
+    exists. That branch also hardcodes ``coords + 56`` as the patch centre, half
+    of patch_size=112, so it would be wrong for any other patch size.
     """
     from scipy.spatial.distance import cdist
 
@@ -232,11 +232,11 @@ def run_full_validation(
 
     verdict_features: which features count toward the headline verdict. Defaults
     to all of them. The pipeline passes an explicit list so that alternative
-    definitions of the same quantity — h_intensity and h_intensity_wholepatch —
-    are both REPORTED but only one is COUNTED; otherwise a single feature votes
+    definitions of the same quantity (h_intensity and h_intensity_wholepatch)
+    are both REPORTED while only one is COUNTED. Otherwise a single feature votes
     twice and can push the verdict from CAUTIOUS to POSITIVE on its own.
 
-    THE VERDICT RULE IS NON-MONOTONIC — know this before quoting it
+    THE VERDICT RULE IS NON-MONOTONIC. Know this before quoting it.
     --------------------------------------------------------------
     The three-way branch is::
 

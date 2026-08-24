@@ -14,23 +14,29 @@ functions below; summarised here because they belong in Methods:
    persisted. See :func:`normalize_slide`.
 
 Neither affects the current reference outputs (``per_section_v2``), which run
-with ``--stain-method none`` — ``build_normalizer`` returns ``None`` and
-``normalize_slide`` returns its input unchanged on the first line.
+with ``--stain-method none``. In that mode ``build_normalizer`` returns ``None``
+and ``normalize_slide`` returns its input unchanged on the first line, so this
+module is inert on the production path.
 """
 
 import numpy as np
 from pathlib import Path
 
 
-# Reinhard normalizer
-
 class ReinhardNormalizer:
-    """
-    Reinhard color normalization in LAB space.
+    """Reinhard colour normalization in LAB space.
 
-    Transfers the mean and standard deviation of each LAB channel from
-    a reference image to the target image.  Simple, fast, and doesn't
-    require any problematic native libraries.
+    Matches the target's per-channel LAB mean and standard deviation to the
+    reference's. LAB is used because its lightness channel is roughly separable
+    from the two colour channels, so the transfer can move stain colour without
+    equally distorting brightness.
+
+    Usage is ``fit(reference)`` then ``transform(image)``, and ``transform``
+    raises if ``fit`` has not run.
+
+    Chosen over the staintools methods because it needs no native libraries.
+    Macenko and Vahadane pull in ``spams``, which is the dependency that fails to
+    build most often on the cluster.
 
     Reference:
         Reinhard et al., "Color Transfer between Images", IEEE CG&A 2001.
@@ -41,21 +47,43 @@ class ReinhardNormalizer:
         self.ref_stds = None
 
     def fit(self, reference_rgb: np.ndarray):
-        """Compute LAB channel statistics from a reference image."""
+        """Store the reference image's per-channel LAB mean and std.
+
+        Statistics come from tissue pixels only. Including background would let
+        the ratio of glass to tissue drive the statistics, so two slides with
+        the same staining but different tissue coverage would normalize
+        differently.
+
+        Both the L < 230 tissue cutoff and the 1000-pixel minimum are hardcoded
+        here and appear nowhere in the config.
+
+        Mutates the instance and returns None.
+        """
         import cv2
         lab = cv2.cvtColor(reference_rgb, cv2.COLOR_RGB2LAB).astype(np.float64)
 
-        # Only compute stats from tissue pixels.
         tissue_mask = lab[:, :, 0] < 230
         if tissue_mask.sum() < 1000:
-            # Fall back to all pixels if tissue detection fails.
+            # Too little tissue to estimate from, so use every pixel instead.
+            # Silent: a mostly-blank reference produces background statistics
+            # and normalizes the whole cohort toward glass.
             tissue_mask = np.ones(lab.shape[:2], dtype=bool)
 
         self.ref_means = np.array([lab[:, :, c][tissue_mask].mean() for c in range(3)])
         self.ref_stds = np.array([lab[:, :, c][tissue_mask].std() + 1e-6 for c in range(3)])
 
     def transform(self, image_rgb: np.ndarray) -> np.ndarray:
-        """Normalize an image to match the reference color distribution."""
+        """Return ``image_rgb`` recoloured to the reference's LAB distribution.
+
+        Standardises each channel by the source's own tissue statistics, then
+        rescales to the reference's. Output is uint8, clipped to [0, 255].
+
+        Clipping is lossy at the extremes: a source whose distribution is much
+        wider than the reference's has its tails flattened onto 0 and 255, and
+        that is not recoverable.
+
+        Raises RuntimeError if ``fit`` has not been called.
+        """
         import cv2
 
         if self.ref_means is None:
@@ -63,7 +91,7 @@ class ReinhardNormalizer:
 
         lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB).astype(np.float64)
 
-        # Compute stats from tissue pixels of the source image.
+        # Same tissue-only rule as fit(), applied to the source this time.
         tissue_mask = lab[:, :, 0] < 230
         if tissue_mask.sum() < 1000:
             tissue_mask = np.ones(lab.shape[:2], dtype=bool)
@@ -71,7 +99,8 @@ class ReinhardNormalizer:
         src_means = np.array([lab[:, :, c][tissue_mask].mean() for c in range(3)])
         src_stds = np.array([lab[:, :, c][tissue_mask].std() + 1e-6 for c in range(3)])
 
-        # Normalize the source, then shift to the reference distribution.
+        # 1e-6 was added to every std in fit() and above, so this cannot divide
+        # by zero on a constant channel.
         for c in range(3):
             lab[:, :, c] = (lab[:, :, c] - src_means[c]) / src_stds[c]
             lab[:, :, c] = lab[:, :, c] * self.ref_stds[c] + self.ref_means[c]
@@ -80,16 +109,14 @@ class ReinhardNormalizer:
         return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
 
 
-# Public API
-
 def build_normalizer(method: str, reference_image_path: str):
     """Build a stain normalizer fitted to a reference slide.
 
     Reference slide selection
     -------------------------
-    ``run_all.py`` passes ``slides[0]["image"]`` — the **first slide in sorted
-    PNG-filename order**, after any ``--slides`` / ``--slides-from-file`` filter
-    has been applied. There is no designated reference slide.
+    ``run_all.py`` passes ``slides[0]["image"]``, meaning the **first slide in
+    sorted PNG-filename order**, after any ``--slides`` or ``--slides-from-file``
+    filter has been applied. There is no designated reference slide.
 
     The consequence is that **running a subset can change the reference**, and
     with it the normalization applied to every slide in that run. Two runs over
@@ -101,9 +128,9 @@ def build_normalizer(method: str, reference_image_path: str):
     -------
     ``"none"`` returns ``None`` (no normalization, the current default for all
     reference runs). ``"reinhard"`` uses the in-file :class:`ReinhardNormalizer`.
-    ``"macenko"`` and ``"vahadane"`` both route to ``staintools``; note that
-    ``vahadane`` is reachable only by calling this function directly, since
-    ``run_all.py`` restricts ``--stain-method`` to reinhard/macenko/none.
+    ``"macenko"`` and ``"vahadane"`` both route to ``staintools``. ``vahadane``
+    is reachable only by calling this function directly, since ``run_all.py``
+    restricts ``--stain-method`` to reinhard, macenko and none.
 
     Raises ``ValueError`` on an unrecognised method and ``ImportError`` if
     ``staintools`` is missing for the methods that need it.
@@ -146,20 +173,24 @@ def build_normalizer(method: str, reference_image_path: str):
 def normalize_slide(image_array: np.ndarray, normalizer, slide_name: str = "") -> np.ndarray:
     """Apply stain normalization to one slide image array.
 
-    Failure semantics — read before trusting a normalized run
-    --------------------------------------------------------
+    Failure semantics, worth reading before trusting a normalized run
+    ----------------------------------------------------------------
     Any exception raised by ``normalizer.transform`` is caught and the **original,
     un-normalized array is returned**. A warning goes to stdout and nothing else
     is recorded: no sentinel, no counter, no entry in ``feature_failures.json``.
 
     A run can therefore be silently half-normalized, and after the fact the only
-    evidence is the SLURM log. This is deliberately *unlike* the feature-extraction
-    path, which encodes failure as NaN and persists a diagnostic. If you are
+    evidence is the SLURM log. The feature-extraction path handles this the
+    opposite way, encoding failure as NaN and persisting a diagnostic. If you are
     interpreting a ``reinhard`` or ``macenko`` run, grep its log for
     "Stain normalization failed" before drawing conclusions.
 
-    ``normalizer is None`` (i.e. ``--stain-method none``) returns the input
-    immediately and is not a failure path.
+    A None ``normalizer``, which is what ``--stain-method none`` produces,
+    returns the input immediately and is not a failure path.
+
+    Output is uint8 either way. A normalizer returning floats gets clipped to
+    [0, 255] and cast, so a transform that returns values in [0, 1] would
+    collapse to near-black without erroring.
     """
     if normalizer is None:
         return image_array

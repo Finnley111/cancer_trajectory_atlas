@@ -1,5 +1,5 @@
 """
-Phase 5 — Morphological Feature Extraction
+Phase 5. Morphological Feature Extraction
 
 Compute interpretable, low-level morphological descriptors from raw
 (stain-normalized) patch images. These are used to validate whether
@@ -17,7 +17,7 @@ MISSING-VALUE CONVENTION
     Every function here returns np.nan for "could not be measured", never 0.0.
     That distinction is load-bearing: DPT roots are selected as
     argsort(nuclear_density)[:20] (analysis/diffusion.py), so a failure encoded
-    as 0.0 is not merely lost — it is PREFERENTIALLY PROMOTED TO A ROOT, and the
+    as 0.0 is not merely lost. It is PREFERENTIALLY PROMOTED TO A ROOT, and the
     pseudotime origin ends up anchored on whichever patches crashed the
     segmenter. NaN is excluded by the np.isfinite() filters in
     validation/correlations.py and by explicit masking in the root selection.
@@ -34,7 +34,7 @@ MISSING-VALUE CONVENTION
         patch_size**2 (12544), so this cannot fire from the pipeline.
       * compute_nc_ratio returns +inf when a mask covers 100% of the patch
         (zero cytoplasm pixels). np.isfinite(inf) is False, so such a patch is
-        excluded by the same filters that exclude nan — the convention holds
+        excluded by the same filters that exclude nan, so the convention holds
         even though the sentinel differs.
 
 DIAGNOSTIC ARITHMETIC HAS A KNOWN EDGE CASE
@@ -49,7 +49,7 @@ DIAGNOSTIC ARITHMETIC HAS A KNOWN EDGE CASE
     incrementing n_failed. Both subtractions are then understated and can go
     NEGATIVE.
 
-    The FEATURE VALUES are correct in that case — partial results are genuinely
+    The FEATURE VALUES are correct in that case. Partial results are genuinely
     valid and are deliberately kept. Only the two derived counts in the printout
     and in feature_failures.json are affected. With n_failed == 0 (every run to
     date, including per_section_v2) the arithmetic is exact. Left as-is because
@@ -153,7 +153,7 @@ def compute_texture_entropy(
 ) -> float:
     """Shannon entropy of the GLCM, averaged over distances AND angles.
 
-    FIX 1b — was angles=[0] only, i.e. horizontal pixel pairs. Tissue
+    FIX 1b. Was angles=[0] only, meaning horizontal pixel pairs. Tissue
     disorganisation has no preferred axis, so a single-angle GLCM partly measures
     how the section happened to be mounted.
 
@@ -163,7 +163,7 @@ def compute_texture_entropy(
     systematically HIGHER value than the mean of the parts (Jensen), which would
     add an offset unrelated to this fix and break comparability with the baseline
     run. Because the 3x4 design is balanced, averaging over angles then distances
-    is numerically identical to this flat mean — that ordering is not a real
+    is numerically identical to this flat mean, so that ordering is not a real
     choice; entropy-then-average versus average-then-entropy is.
     """
     from skimage.feature import graycomatrix
@@ -191,9 +191,10 @@ def compute_texture_entropy(
 
 def compute_hematoxylin_intensity(h_channel: np.ndarray,
                                   labeled_mask: Optional[np.ndarray] = None) -> float:
-    """Mean hematoxylin optical density WITHIN segmented nuclei — chromatin density.
+    """Mean hematoxylin optical density WITHIN segmented nuclei, a proxy for
+    chromatin density.
 
-    FIX 1c — previously averaged over every pixel in the patch, background
+    FIX 1c. Previously averaged over every pixel in the patch, background
     included. That makes the value rise mechanically with the fraction of the
     patch covered by nuclei, i.e. with nuclear density, rather than measuring how
     darkly the chromatin itself stains. The module docstring has always called
@@ -218,11 +219,11 @@ def compute_packing_irregularity(labeled_mask: np.ndarray) -> float:
     Coefficient of variation of nearest-neighbor distances between nuclear centroids.
     Higher = more spatially disordered.
 
-    FIX 1d — sentinel only. The <3-nuclei limitation is intrinsic to a
+    FIX 1d, sentinel only. The <3-nuclei limitation is intrinsic to a
     coefficient of variation over nearest-neighbour distances and is NOT changed.
     What changed is that sparse patches now return nan instead of 0.0, so they are
     excluded from correlations rather than counted as "perfectly regular packing"
-    — an artificial value that tied this feature structurally to nuclear density.
+    an artificial value that tied this feature structurally to nuclear density.
     """
     from skimage.measure import regionprops
     from scipy.spatial import KDTree
@@ -252,7 +253,7 @@ def compute_nuclear_density_quick(patches: np.ndarray,
     Faster than the full morphological feature suite; used to select the
     n lowest-cellularity root candidates before running multi-root DPT.
 
-    FIX 1a — failures now yield np.nan, not 0.0. This function feeds DPT root
+    FIX 1a. Failures now yield np.nan, not 0.0. This function feeds DPT root
     selection directly, so the old behaviour meant every crashed patch became a
     root candidate ahead of every real patch: the pseudotime origin was biased
     toward segmentation failures by construction.
@@ -325,11 +326,11 @@ def compute_morphological_features(
     """
     Compute all morphological features for a batch of patches.
 
-    FIX 1a — features initialise to np.nan and a failed patch STAYS nan, instead
+    FIX 1a. Features initialise to np.nan and a failed patch STAYS nan, instead
     of silently reading as 0.0. Failures are counted, indexed and reported rather
     than warned about five times and then forgotten.
 
-    FIX 1c — `h_intensity` is now masked to segmented nuclei. The legacy
+    FIX 1c. `h_intensity` is now masked to segmented nuclei. The legacy
     whole-patch value is retained as `h_intensity_wholepatch` so the two
     definitions are directly comparable inside a single run.
 
@@ -382,7 +383,7 @@ def compute_morphological_features(
             )
 
         except Exception as exc:
-            # Features for this patch stay nan — NOT 0.0. See the missing-value
+            # Features for this patch stay nan, NOT 0.0. See the missing-value
             # convention in the module docstring for why that distinction matters.
             failed_indices.append(i)
             key = type(exc).__name__

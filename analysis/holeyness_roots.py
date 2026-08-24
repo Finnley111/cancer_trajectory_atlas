@@ -50,26 +50,27 @@ THE SELECTION RULE, FIXED IN ADVANCE AND NOT TUNED
    lowest" so the anchor is not a handful of extreme ducts.
 5. Ducts need ``min_patches_per_duct`` assigned patches (default 1). Raising it
    would exclude more SMALL ducts, and small ducts are already the population the
-   centre-in-polygon rule under-samples — see the inherited limitation below.
+   centre-in-polygon rule under-samples. See the inherited limitation below.
 6. Roots are taken ONE PER DUCT, ducts ascending by hole %, patch = the one whose
    centre is nearest its duct centroid. This stops all 20 roots collapsing into
    one large duct.
 7. TIE-BREAK. A bottom decile of hole % is very likely to be entirely 0.0, which
    makes the percentile degenerate. Ties are broken by ``object_id`` UUID string
-   order. That is arbitrary but reproducible, and — the point — INDEPENDENT of
-   every downstream quantity, so it cannot leak result-dependence into the anchor.
+   order. That is arbitrary but reproducible, and, which is the whole point,
+   INDEPENDENT of every downstream quantity, so it cannot leak result-dependence
+   into the anchor.
 
 INHERITED LIMITATION, REPORTED NOT FIXED
 ----------------------------------------
 The centre-in-polygon rule excluded 571 of 2,173 ducts (26%) in the earlier
 holey-ness analysis, and those were systematically the SMALLEST and LEAST holey
-ducts — i.e. exactly the population a low-holeyness root rule draws from. This
+ducts, meaning exactly the population a low-holeyness root rule draws from. This
 module does not attempt to fix that (``holeyness_final.py``'s Task F explores an
 area-overlap rule instead); it REPORTS how many ducts are available as candidates
 here so the comparison is visible.
 
 READ-ONLY. Reads the measurement export, the ratio annotations and
-slide_dimensions.json. Writes nothing itself — ``run_all.py`` saves the returned
+slide_dimensions.json. Writes nothing itself; ``run_all.py`` saves the returned
 report to ``<out>/holeyness_roots.json``.
 """
 
@@ -106,7 +107,7 @@ def assign_patches_to_ducts_overlap(
     The centre-in-polygon rule (``holeyness.assign_patches_to_ducts``) requires
     the patch's single centre pixel to fall inside a duct. A duct smaller than a
     112 px patch, or narrower than one, can therefore contain tissue in several
-    patches while capturing the centre of none — which is how 571 of 2173 ducts
+    patches while capturing the centre of none. That is how 571 of 2173 ducts
     (26%) ended up with zero patches, systematically the SMALLEST and LEAST holey
     ones. That is precisely the population a low-holeyness root rule must draw
     from, so under the centre rule the anchor is blind to it.
@@ -117,8 +118,8 @@ def assign_patches_to_ducts_overlap(
     "most covered", which is what the task specifies.
 
     Lifted from ``holeyness_final.py:run_overlap_sensitivity`` (Task F), which
-    established the approach and the 0.25 default. That module is NOT modified —
-    its v1-v3b consolidation output stays exactly as it was.
+    established the approach and the 0.25 default. That module is NOT modified,
+    so its v1-v3b consolidation output stays exactly as it was.
 
     NOTE ON HOLES. ``load_duct_polygons`` builds each MplPath from
     ``geometry["coordinates"][0]``, the OUTER ring only, so a duct's own lumen is
@@ -126,7 +127,7 @@ def assign_patches_to_ducts_overlap(
     the centre rule's behaviour, so the two assignments stay comparable.
 
     Raises ImportError with an actionable message if shapely is missing rather
-    than silently falling back to the centre rule — a silent fallback would make
+    than silently falling back to the centre rule. A silent fallback would make
     the two configurations indistinguishable in the output.
     
     DUPLICATE OF holeyness_final.run_overlap_sensitivity's inner loop, and provably
@@ -205,25 +206,25 @@ def assert_roots_connected(adata, root_indices: Sequence[int]) -> dict:
     --------------------------------------------------
     Selecting the seed's 19 nearest PCA neighbours would guarantee tightness, but
     20 mutually-adjacent patches are very likely 20 patches of the SAME duct on
-    the SAME slide — which collapses the anchor to a single location and lets any
+    the SAME slide, which collapses the anchor to a single location and lets any
     local artifact there define the origin. Diversity across ducts is the thing
     the one-root-per-duct rule buys; this check keeps that and tests the property
     that actually matters instead.
 
     WHAT ACTUALLY GOES WRONG, mechanically. ``compute_dpt_multi_root`` runs each
-    root through its OWN ``sc.tl.dpt`` call and medians the results — the walks
+    root through its OWN ``sc.tl.dpt`` call and medians the results, so the walks
     never "collide". The real failure is the clamp: a root sitting in a small
     component returns inf for every patch outside it, those inf values are
     clamped to that root's own maximum, and a near-constant vector enters the
     median. Config B is exactly this: pseudotime_std at 30.5% of its range.
 
-    Fails loudly if the neighbour graph is absent — it must be, since
+    Fails loudly if the neighbour graph is absent. It must be present, since
     ``compute_diffusion_map`` runs before root selection in ``run_all``.
 
     Returns a diagnostic dict; also reports the max pairwise latent distance, in
-    the SAME space and metric ``sc.pp.neighbors`` used (``adata.X``, euclidean —
-    scanpy's default, since no ``metric=`` is ever passed). Reported only, never
-    used to select.
+    the SAME space and metric ``sc.pp.neighbors`` used: ``adata.X``, euclidean,
+    which is scanpy's default since no ``metric=`` is ever passed. Reported only,
+    never used to select.
     """
     from scipy.sparse.csgraph import connected_components
 
@@ -304,7 +305,7 @@ def select_holeyness_roots(
     """Return (root_indices, report).
 
     ``coords`` are the pipeline's top-left (x, y) in cropped-PNG pixel space and
-    ``slide_ids`` index into ``slide_names`` — i.e. exactly what ``run_all``
+    ``slide_ids`` index into ``slide_names``, exactly what ``run_all``
     holds at PHASE 4, in the same row order as ``adata``. The returned indices
     are positions in that array, which is what ``compute_dpt_multi_root`` wants.
 
@@ -443,7 +444,7 @@ def select_holeyness_roots(
 
     # ── Degenerate pool: FAIL LOUDLY ─────────────────────────────────────────
     # If every duct in the pool sits exactly at the threshold, "lowest holeyness"
-    # is not ordering anything — the tie-break is. The tie-break is UUID order,
+    # is not ordering anything; the tie-break is. The tie-break is UUID order,
     # which is arbitrary but at least independent of every downstream quantity;
     # it is emphatically NOT nuclear_density, because using density here would
     # quietly reinstate the circularity this whole anchor exists to remove.

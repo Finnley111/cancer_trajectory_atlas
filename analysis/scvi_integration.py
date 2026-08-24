@@ -1,16 +1,27 @@
-"""
-scVI batch correction for phikon PCA features (continuous-data variant).
+"""scVI batch correction for Phikon PCA features, continuous-data variant.
 
-Alternative to Harmony (see analysis/harmony.py) for removing slide-level /
+Alternative to Harmony (analysis/harmony.py) for removing slide-level or
 section-level batch effects from the PCA embedding before clustering and DPT.
-Unlike Harmony, scVI learns a nonlinear latent space via a VAE.
+Where Harmony fits a linear correction, scVI learns a nonlinear latent space
+through a VAE.
 
-Input is the SAME post-PCA matrix Harmony receives (continuous, already
-standardized+PCA'd Phikon features) — NOT a counts matrix. scVI is
-configured with gene_likelihood="normal" for this reason.
+NOT ON THE PRODUCTION PATH. Every recorded run passes ``--batch-method none``.
 
-Two scVI defaults assume count data and must be disabled for this
-continuous input, or training produces NaNs immediately on the first batch:
+Also note the OUTPUT DIMENSION DIFFERS from Harmony's. Harmony returns the input
+shape; this returns (N, n_latent), 30 by default. Anything downstream that
+assumes the batch-correction step is shape-preserving is wrong for this backend.
+
+Input is the SAME post-PCA matrix Harmony receives: continuous, already
+standardized and PCA'd Phikon activations, NOT a counts matrix. Everything
+awkward below follows from that one mismatch. scVI is written for
+non-negative integer counts, and this feeds it neither.
+
+Three settings depart from scVI's defaults, all for the same reason. Each was
+required to make training run at all, not tuned for quality:
+
+- gene_likelihood="normal": the default is a negative binomial, a distribution
+  over non-negative integers. PCA components are real-valued and signed, so the
+  default likelihood cannot represent them.
 
 - use_observed_lib_size=False: the default estimates a per-cell library
   size as log(sum of X), which assumes non-negative count-like data. PCA
@@ -24,10 +35,14 @@ continuous input, or training produces NaNs immediately on the first batch:
   encoder forward pass, before any training even happens. Disabling it
   feeds the encoder the raw continuous values directly.
 
-Batch key: section_number only ("2M-1" vs "2M-2") — this backend exists
-specifically to test whether a more expressive nonlinear correction closes
-the residual batch-mixing gap Harmony leaves (see PROJECT_STATE.md Working
-Log, 2026-06-24: Harmony k-NN batch purity 0.9425 vs 0.502 chance baseline).
+Batch key: section_number only ("2M-1" vs "2M-2"). This backend exists to test
+whether a more expressive nonlinear correction closes the residual batch-mixing
+gap Harmony leaves (PROJECT_STATE.md Working Log, 2026-06-24: Harmony k-NN batch
+purity 0.9425 against a 0.502 chance baseline).
+
+Read the result cautiously. A VAE with enough capacity can mix the batches by
+discarding the variation that distinguishes them, and improved mixing is
+therefore not by itself evidence that biology survived.
 """
 
 import numpy as np
@@ -45,23 +60,32 @@ def apply_scvi(
     n_hidden: int = 128,
     max_epochs: int = 400,
 ):
-    """
-    Apply scVI batch correction to PCA features.
+    """Apply scVI batch correction to PCA features.
 
     Args:
-        X_pca:       (N, k) raw PCA features from fit_pca().
-        slide_names: List of slide name strings, one entry per slide,
-                     indexed by the integer values in slide_ids.
-        slide_ids:   (N,) int array mapping each patch to its slide index.
-        key:         Batch grouping key (always "section_number" for scVI).
-        n_latent:    Dimensionality of the scVI latent space.
-        n_layers:    Number of hidden layers in the encoder/decoder.
-        n_hidden:    Number of nodes per hidden layer.
-        max_epochs:  Maximum training epochs.
+        X_pca: (N, k) raw PCA features from ``fit_pca()``.
+        slide_names: slide name strings, one per slide, indexed by the integers
+            in ``slide_ids``.
+        slide_ids: (N,) int array mapping each patch to its slide index.
+        key: batch grouping key, always "section_number" for this backend.
+        n_latent: latent dimensionality, and the WIDTH OF THE RETURNED ARRAY.
+        n_layers: hidden layers in the encoder and decoder.
+        n_hidden: nodes per hidden layer.
+        max_epochs: training epochs. scVI may stop earlier on its own
+            early-stopping criterion, so this is a ceiling.
 
     Returns:
-        (X_scvi, model): (N, n_latent) corrected embedding and the trained
-        scvi.model.SCVI instance (for saving to disk by the caller).
+        ``(X_scvi, model)``. The embedding is (N, n_latent), NOT (N, k), and row
+        order matches the input. The trained ``scvi.model.SCVI`` is returned so
+        the caller can persist it; this function saves nothing.
+
+    NOT DETERMINISTIC unless the caller seeds scVI beforehand. Training involves
+    random initialisation and stochastic minibatching, so two runs on identical
+    input give different embeddings. That is the main reason this backend is
+    unsuitable for the bit-identical regression comparison the Harmony and
+    no-correction paths support.
+
+    Raises ImportError when scvi-tools or anndata is missing.
     """
     try:
         import anndata as ad
@@ -97,12 +121,10 @@ def apply_scvi(
         n_hidden=n_hidden,
         gene_likelihood="normal",
         use_observed_lib_size=False,
-        # scVI's encoder applies log(1+x) to its input by default
-        # (log_variational=True), which assumes non-negative count data.
-        # X_pca is mean-centered/standardized and routinely negative, so
-        # log(1+x) for x <= -1 produces NaN on the very first forward pass.
-        # Disable it — the data is already continuous, no count-style
-        # input transform is appropriate here.
+        # Left at False for the reason given in the module docstring: the
+        # encoder's default log(1+x) transform assumes non-negative counts, and
+        # standardized PCA output routinely goes below -1, which produces NaN in
+        # the first forward pass before any training happens.
         log_variational=False,
     )
     model.train(max_epochs=max_epochs)

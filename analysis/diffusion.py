@@ -55,7 +55,7 @@ def compute_diffusion_map(
         Leiden      k=15, cosine     (analysis/clustering.py:cluster_leiden)
         this graph  k=30, EUCLIDEAN  (here)
 
-    **The euclidean metric is not a choice — it is scanpy's default.** The
+    **The euclidean metric is not a choice.** It is scanpy's default. The
     ``sc.pp.neighbors`` call below passes no ``metric`` argument, so scanpy
     supplies ``metric='euclidean'``. There is no CLI flag for it; changing it
     means editing this line. ``n_neighbors`` IS configurable, via
@@ -67,7 +67,7 @@ def compute_diffusion_map(
 
     ``use_rep="X"`` makes scanpy read ``adata.X`` directly rather than
     recomputing a PCA, so the diffusion map sees exactly the matrix
-    ``build_adata`` was handed — post-batch-correction when one is active.
+    ``build_adata`` was handed, post-batch-correction when one is active.
 
     This function must run before ``compute_paga_topology`` and
     ``compute_dpt_multi_root``; both consume the graph it writes into
@@ -95,8 +95,8 @@ def choose_root_cell(
     Select the root cell as the patch closest to the centroid of root_cluster.
 
     The root cluster should be the most well-organized, low-density,
-    morphologically regular cluster — identified by visual inspection
-    in Phase 3.
+    morphologically regular cluster, identified by visual inspection in
+    Phase 3.
 
     Args:
         adata: AnnData with cluster labels in adata.obs['cluster'].
@@ -128,14 +128,14 @@ def compute_dpt(
     """
     Compute Diffusion Pseudotime from a biologically anchored root.
 
-    SINGLE-ROOT PATH — used by run_individual.py ONLY. The atlas pipeline
+    SINGLE-ROOT PATH, used by run_individual.py ONLY. The atlas pipeline
     (run_all.py) does not call this; it uses compute_dpt_multi_root, which picks
     roots by nuclear density and median-aggregates over 20 of them. Do not
     "unify" the two: per-slide runs deliberately anchor on a cluster because a
     single slide has no cohort to rank densities against.
 
-    Either specify root_cluster (recommended — will auto-select the centroid
-    patch) or root_index (if you already know which patch to use).
+    Either specify root_cluster, which auto-selects the centroid patch and is
+    the recommended form, or root_index when you already know the patch.
 
     Results stored in adata.obs['dpt_pseudotime'] and adata.obs['pseudotime']
     (the latter normalized to [0, 1]). Note this writes 'dpt_pseudotime' whereas
@@ -192,18 +192,19 @@ def compute_dpt_multi_root(
     caller-supplied root set. Added for the v3 holeyness-rooted experiment
     (``analysis/holeyness_roots.py``), which anchors the axis on expert-annotated
     per-duct hole %, a quantity derived from hand annotation rather than from the
-    pipeline's own pixels — so it removes the circularity of rooting on
+    pipeline's own pixels, so it removes the circularity of rooting on
     nuclear_density, which is simultaneously a validation feature and the
     cellularity-confound covariate.
 
-    When it is None — every production run to date — nothing below changes: the
+    When it is None, which covers every production run to date, nothing below
+    changes: the
     density rule, the non-finite masking, the clamping, the median aggregation
     and the min-max normalisation are all exactly as they were. When it is
     supplied, ONLY the root set changes; ``nuclear_density`` is then used solely
     for the diagnostic print and may legitimately be all-finite-but-unranked.
 
-    Note that a root-rule change is EXPECTED to alter the axis ORIENTATION and
-    the root set, not the ordering: uniformly random 20-root sets already
+    A root-rule change is EXPECTED to alter the axis ORIENTATION and the root
+    set, not the ordering: uniformly random 20-root sets already
     reproduce the production pseudotime at |rho| 0.78-0.89, so the manifold fixes
     the ordering and the roots fix only which end is zero.
 
@@ -224,8 +225,8 @@ def compute_dpt_multi_root(
 
     This is NOT the same as ``argsort(nuclear_density)[:n_roots]``. The two agree
     only when every patch has a measured density. Several analysis and diagnostic
-    modules quote the simpler form when re-deriving the root set — it happened to
-    be correct for runs with zero extraction failures, but it is not the rule.
+    modules quote the simpler form when re-deriving the root set. That happened
+    to be correct for runs with zero extraction failures; it is not the rule.
 
     Anything needing the true root set should read ``adata.uns[...]`` rather than
     re-deriving it; see below.
@@ -296,9 +297,9 @@ def compute_dpt_multi_root(
         # nan means extraction failed (validation/morphological_features.py); such a
         # patch has no density, so it cannot be "the least cellular". np.argsort does
         # place nan last, which happens to give the right answer here, but relying on
-        # that is implicit and silently breaks if the sort or dtype ever changes —
-        # and the cost of being wrong is that the pseudotime ORIGIN is anchored on
-        # whichever patches crashed the segmenter. So mask explicitly.
+        # that is implicit and silently breaks if the sort or dtype ever changes.
+        # The cost of being wrong is that the pseudotime ORIGIN gets anchored on
+        # whichever patches crashed the segmenter, so mask explicitly instead.
         finite = np.isfinite(nuclear_density)
         n_excluded = int((~finite).sum())
         if n_excluded:
@@ -320,8 +321,8 @@ def compute_dpt_multi_root(
               f"{nuclear_density[root_candidates[-1]]:.4f}])")
 
     # Persist the roots. Without this, the root set cannot be recovered from the
-    # run afterwards — it has to be re-derived from a rule applied to a different
-    # array than the one actually used, which is not verifiable.
+    # run afterwards. It would have to be re-derived from a rule applied to a
+    # different array than the one actually used, which is not verifiable.
     adata.uns["dpt_root_candidates"] = np.asarray(root_candidates, dtype=np.int64)
     adata.uns["dpt_n_roots_excluded_nonfinite"] = n_excluded
 
@@ -387,8 +388,8 @@ def compute_paga_topology(
     Requires that sc.pp.neighbors has already been called (compute_diffusion_map).
 
     THIS GATE MIXES BOTH NEIGHBOUR GRAPHS, which is what makes its verdict easy
-    to misread. It groups patches by ``adata.obs['cluster']`` — Leiden labels
-    from the k=15 COSINE graph — but the connectivities PAGA computes come from
+    to misread. It groups patches by ``adata.obs['cluster']``, the Leiden labels
+    from the k=15 COSINE graph, but the connectivities PAGA computes come from
     ``adata.uns['neighbors']``, the k=30 EUCLIDEAN diffusion graph.
 
     So "SINGLE component -> DPT is valid" means precisely: *the euclidean k=30

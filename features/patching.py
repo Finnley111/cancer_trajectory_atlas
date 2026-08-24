@@ -15,12 +15,18 @@ from typing import Tuple, Optional, List
 Image.MAX_IMAGE_PIXELS = None
 
 
-# Background and tissue filters
-
 def _is_mostly_white(patch_arr: np.ndarray,
                      white_thresh: int = 220,
                      white_frac: float = 0.70) -> bool:
-    """Reject patches where most pixels are above the white threshold."""
+    """True when the patch is mostly background glass.
+
+    A pixel counts as white only if ALL THREE channels exceed ``white_thresh``,
+    so a strongly tinted bright pixel is not white.
+
+    Both thresholds are function defaults that no caller overrides and that are
+    not exposed on the CLI, so 220 and 0.70 are what every recorded run used.
+    Neither value was tuned; they are the originals.
+    """
     white_mask = np.all(patch_arr > white_thresh, axis=-1)
     return white_mask.mean() > white_frac
 
@@ -29,7 +35,19 @@ def _has_tissue_hsv(patch_pil: Image.Image,
                     sat_thresh: int = 15,
                     val_thresh: int = 230,
                     tissue_threshold: float = 0.5) -> bool:
-    """Return True if the patch has enough saturated, non-bright pixels."""
+    """True when enough of the patch is saturated and not too bright.
+
+    Catches what ``_is_mostly_white`` misses: pale or out-of-focus tissue that is
+    not white enough to reject on brightness alone but carries no usable
+    morphology. A pixel counts as tissue when its saturation exceeds
+    ``sat_thresh`` AND its value is below ``val_thresh``, and the patch passes
+    when at least ``tissue_threshold`` of its pixels qualify.
+
+    Note the comparison is >=, so a patch exactly at the threshold is kept.
+
+    All three thresholds (15, 230, 0.5) are function defaults, not in the config
+    and not on the CLI. They were never tuned.
+    """
     hsv = np.array(patch_pil.convert("HSV"))
     has_color = hsv[:, :, 1] > sat_thresh
     is_dense = hsv[:, :, 2] < val_thresh
@@ -37,10 +55,20 @@ def _has_tissue_hsv(patch_pil: Image.Image,
     return tissue_frac >= tissue_threshold
 
 
-# ROI helpers
-
 def _make_path(outer: np.ndarray, inner_rings: list):
-    """Return an MplPath that correctly handles inner rings (holes) as a compound path."""
+    """Build an MplPath from an outer ring plus any inner rings.
+
+    Inner rings become genuine holes rather than separate filled shapes, which
+    matters because a duct annotated with a lumen would otherwise test as
+    containing points that lie in the lumen.
+
+    Returns a plain path when there are no inner rings, and a compound path with
+    explicit MOVETO/LINETO/CLOSEPOLY codes when there are. Matplotlib applies the
+    even-odd rule to compound paths, which is what makes the holes holes.
+
+    Assumes every ring is already closed (last vertex repeating the first); the
+    code array allots exactly one CLOSEPOLY per ring on that basis.
+    """
     from matplotlib.path import Path as MplPath
     if not inner_rings:
         return MplPath(outer)
@@ -69,15 +97,15 @@ def load_roi_polygons(
     -----------------
     Three spaces exist in this pipeline:
 
-    1. Full-NDPI pixel space — width = NDPI level-0 dimension (includes BOTH
-       slide copies side by side). ``original_full_width`` stores this value.
+    1. Full-NDPI pixel space. Width is the NDPI level-0 dimension, which includes
+       BOTH slide copies side by side. ``original_full_width`` stores this value.
 
-    2. Cropped-PNG pixel space — width = original_full_width // 2 (left half
-       only). Patch (x, y) coords from get_patches_from_array live here.
+    2. Cropped-PNG pixel space. Width is ``original_full_width // 2``, the left
+       half only. Patch (x, y) coords from get_patches_from_array live here.
 
-    3. Ratio space — coordinates in [0, 1] relative to full-NDPI dimensions.
+    3. Ratio space, coordinates in [0, 1] relative to full-NDPI dimensions.
        QuPath annotates the left half of the NDPI, so left-half annotation
-       x-values are in [0, 0.5] in ratio space.
+       x-values fall in [0, 0.5].
 
     When coordinate_space="ratio":
         polygon x *= original_full_width  →  full-NDPI pixel space
@@ -125,7 +153,8 @@ def load_roi_polygons(
                 "ratio coordinate_space requires img_w/img_h or original_full_width/height"
             )
     else:
-        scale_w = scale_h = None  # pixel coords — no scaling needed
+        # Already in pixels, so scale_ring leaves the coordinates alone.
+        scale_w = scale_h = None
 
     with open(annotation_path) as f:
         data = json.load(f)
@@ -138,6 +167,15 @@ def load_roi_polygons(
         features_list = [data]
 
     def scale_ring(ring):
+        """Convert one polygon ring to full-NDPI pixel coordinates.
+
+        Returns an (n, 2) float array, or None when the ring is malformed
+        (wrong dimensionality, or fewer than two coordinates per vertex).
+        Callers must check for None; a malformed ring is skipped, not fatal.
+
+        Trailing coordinates beyond x and y are dropped, so GeoJSON rings
+        carrying a z value are accepted.
+        """
         arr = np.asarray(ring, dtype=float)
         if arr.ndim != 2 or arr.shape[1] < 2:
             return None
@@ -218,8 +256,6 @@ def _coverage_in_rois(x: float, y: float, patch_size: int, roi_polygons: List) -
     return inside / 9
 
 
-# Main extraction
-
 def get_patches_from_array(
     img_arr: np.ndarray,
     patch_size: int = 112,
@@ -238,36 +274,59 @@ def get_patches_from_array(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Extract filtered tissue patches from an in-memory RGB image.
 
-    roi_polygons     — inclusion zones: patch centre must be inside at least one.
-    exclude_polygons — exclusion zones (Ignore*, Necrosis, etc.): patches whose
-                       centre falls inside any of these are always dropped.
+    Returns ``(patches, coords)``: an (N, patch_size, patch_size, 3) uint8 array
+    and an (N, 2) array of top-left (x, y) positions in CROPPED-PNG pixel space.
+    Row i of one corresponds to row i of the other, and that alignment is what
+    every downstream join relies on.
 
-    apply_white_filter / apply_tissue_filter — default True, which is the ONLY
-                       behaviour any published run has used. Both exist solely
-                       for the v3 relaxed-filter experiment (Configs B and C of
-                       jobs/run_v3b_relaxed.sh / run_v3c_both.sh), which asks
-                       what the manifold looks like when background is not
-                       removed. With either set False this function emits
-                       patches the production pipeline would never have seen —
-                       background, slide edge, and out-of-focus glass — so the
-                       resulting patch count, PCA basis and every downstream
-                       number are NOT comparable to a production run on absolute
-                       values. Leave both True unless you are running that
-                       experiment.
-    min_roi_coverage — if set, patches where less than this fraction of a 3x3
-                       sample grid lies inside ANY inclusion polygon are dropped
-                       (catches boundary patches that are mostly outside the
-                       annotation). None = centre-point check only.
+    Patches tile the image left to right, top to bottom. With ``stride`` below
+    ``patch_size`` they overlap, so patches are not independent samples. The
+    trailing partial row and column are dropped: the ranges stop at
+    ``dimension - patch_size``, so up to ``patch_size - 1`` pixels along the
+    right and bottom edges are never covered by any patch.
 
-                       Note: the grid is tested against the whole roi_polygons
-                       list, not only the polygon containing the centre — see
-                       _coverage_in_rois. A patch straddling two adjacent ROIs
-                       is therefore counted as covered, which is intended.
+    Args:
+        roi_polygons: inclusion zones. A patch is kept only if its centre lies
+            inside at least one. None disables the check and keeps everything.
+        exclude_polygons: exclusion zones (Ignore*, Necrosis, and so on). A patch
+            whose centre falls inside any of these is dropped regardless of
+            inclusion.
+        min_roi_coverage: when set, drops patches where less than this fraction
+            of a 3x3 sample grid lies inside ANY inclusion polygon, which catches
+            boundary patches that are mostly outside the annotation. None applies
+            the centre-point check only, and None is what every recorded run
+            used.
 
-    Filter order is fixed and matters for the reported counts: ROI inclusion →
-    coverage → exclusion → white-pixel → HSV tissue. A patch rejected by an
-    earlier filter is never counted by a later one, so the printed tallies are
-    disjoint, not overlapping.
+            The grid is tested against the whole ``roi_polygons`` list rather
+            than only the polygon containing the centre (see
+            ``_coverage_in_rois``). A patch straddling two adjacent ROIs
+            therefore counts as covered, which is intended.
+        apply_white_filter, apply_tissue_filter: both default True, the only
+            behaviour any published run has used. They exist for the v3
+            relaxed-filter experiment (Configs B and C of jobs/run_v3b_relaxed.sh
+            and run_v3c_both.sh), which asks what the manifold looks like when
+            background is not removed.
+
+            WARNING: with either set False this emits patches the production
+            pipeline would never have seen, meaning background, slide edge and
+            out-of-focus glass. That changes the patch count, hence the PCA
+            basis, hence every downstream number, so such a run is NOT comparable
+            to a production run on absolute values. Leave both True unless you
+            are running that experiment.
+
+    The five filters run in a fixed order, and the order matters for the printed
+    counts: ROI inclusion, then coverage, then exclusion, then white-pixel, then
+    HSV tissue. A patch rejected by an earlier filter is never seen by a later
+    one, so the tallies are disjoint rather than overlapping, and no single count
+    tells you how many patches a given filter would reject on its own.
+
+    Assumes ``img_arr`` is at least ``patch_size`` in both dimensions. A smaller
+    image yields empty ranges and returns without raising.
+
+    TRAP: when nothing survives the filters, the returned arrays are
+    ``np.array([])``, shape (0,), NOT the (0, size, size, 3) and (0, 2) the
+    non-empty case gives. Callers that index columns, such as ``coords[:, 0]``,
+    fail on the empty case, so check ``len()`` before indexing.
     """
     h, w = img_arr.shape[:2]
     patches, coords = [], []
@@ -354,10 +413,25 @@ def get_patches_from_array(
 
 
 def sample_patches(patches, coords, max_n, base_seed, slide_name):
-    """Subsample patches to at most max_n, reproducibly by slide name.
+    """Subsample patches to at most max_n, reproducibly per slide.
 
-    Shuffles the full patch list then takes the first max_n entries so that
-    patch order is randomised (not spatially sorted). max_n=0 or None = no cap.
+    Returns ``(patches, coords, idx)``. ``idx`` is the array of selected
+    positions into the ORIGINAL arrays, or None when no cap was applied. Callers
+    need it to subset anything else aligned with the patches; without it the
+    correspondence to the original rows is unrecoverable.
+
+    The seed mixes ``base_seed`` with an MD5 hash of the slide name, so each
+    slide draws a different subset while the whole thing stays reproducible from
+    the seed alone. Seeding on ``base_seed`` alone would make every slide select
+    the same positions, which is a real risk here since patches are emitted in
+    raster order.
+
+    Shuffling before truncating is what keeps the kept patches spatially spread.
+    Taking the first max_n in raster order would return the top strip of the
+    slide.
+
+    ``max_n`` of 0 or None disables the cap, as does a patch count already at or
+    below it; all three return the inputs unchanged with idx None.
     """
     import hashlib
     if max_n is None or max_n == 0 or len(patches) <= max_n:
@@ -381,7 +455,23 @@ def get_patches(
     apply_white_filter: bool = True,
     apply_tissue_filter: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Load an image from disk and extract patches."""
+    """Load an image from disk and extract patches from it.
+
+    Thin wrapper over :func:`get_patches_from_array`. Takes no ROI arguments, so
+    it cannot restrict extraction to an annotation; it patches the whole image.
+    The annotated path in ``run_all.py`` loads the image itself and calls
+    ``get_patches_from_array`` directly.
+
+    TRAP: this SWALLOWS every exception from loading. A missing file, a truncated
+    PNG, or a decode error all print a line and return two empty arrays, which is
+    the same value a real image containing no tissue returns. The caller cannot
+    tell "failed to load" from "loaded fine, nothing survived the filters", and
+    neither case raises. A slide silently contributing zero patches to a cohort
+    is the failure mode to watch for; check the log for "Error loading image".
+
+    ``tissue_threshold`` is not exposed here, so the HSV filter always uses the
+    0.5 default even when a caller has tuned it elsewhere.
+    """
     print(f"Scanning image: {image_path}")
     try:
         img = Image.open(image_path).convert("RGB")

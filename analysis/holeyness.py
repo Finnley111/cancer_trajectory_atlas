@@ -78,10 +78,29 @@ REQUIRED_MEAS_COLS = [COL_IMAGE, COL_OBJECT_ID, COL_CLASS,
 # ── Data loading ─────────────────────────────────────────────────────────────
 
 def load_slide_list(path: Path) -> list[str]:
+    """Read a newline-delimited slide list, dropping blank lines.
+
+    Returns names in FILE ORDER, not sorted. Anything depending on slide
+    ordering inherits the file's order, so keep the section CSVs stable.
+
+    Whitespace is stripped per line. No validation that a name corresponds to a
+    real slide happens here; a typo surfaces later as a missing-annotation or
+    missing-PNG error.
+    """
     return [s.strip() for s in path.read_text().splitlines() if s.strip()]
 
 
 def load_slide_dimensions(path: Path) -> dict[str, dict]:
+    """Load slide_dimensions.json, keyed by bare slide name.
+
+    The file on disk is keyed by FILENAME ("6027-4L-2M-1_x5.png"); this strips
+    the extension so lookups can use the slide name every other module carries.
+    Without that normalisation every join against this dict misses.
+
+    Returns ``{slide_name: dims_dict}``, passing the dimension dicts through
+    unchanged, so callers depend on the writer's key names
+    (original_full_width and friends).
+    """
     with open(path) as f:
         raw = json.load(f)
     result = {}
@@ -501,8 +520,8 @@ def _partial_spearman_multi(x: np.ndarray, y: np.ndarray, controls: list) -> flo
 
     Rank-transforms x, y, and each control, residualizes the ranked x and y
     against the ranked controls via OLS, and returns the Pearson r of the
-    residuals — the standard rank-based generalization of partial Spearman
-    beyond one control. With a single control this is algebraically equivalent
+    residuals, which is the standard rank-based generalization of partial
+    Spearman beyond one control. With a single control this is algebraically equivalent
     to _partial_spearman.
 
     One of four implementations in this repo; see _partial_spearman's docstring for
@@ -773,6 +792,17 @@ def _save_fig(fig: plt.Figure, output_dir: Path, stem: str, dpi: int = 150) -> N
 
 
 def write_scatter_pt_vs_hole(per_duct: pd.DataFrame, output_dir: Path, section: str) -> None:
+    """Scatter duct pseudotime against hole %, one point per duct.
+
+    The primary figure for the holeyness validation: it shows the correlation
+    the whole analysis reports. Points are coloured by slide so a relationship
+    driven by one slide is visible rather than hidden in the pooled cloud.
+
+    Writes scatter_pt_vs_hole_pct.pdf and .png into ``output_dir``.
+
+    Requires the hole_pct, pseudotime and slide_name columns. Colours come from
+    tab10 by category code, so beyond 10 slides they repeat.
+    """
     fig, ax = plt.subplots(figsize=(5, 4))
     sc = ax.scatter(
         per_duct["hole_pct"], per_duct["pseudotime"],
@@ -786,6 +816,16 @@ def write_scatter_pt_vs_hole(per_duct: pd.DataFrame, output_dir: Path, section: 
 
 
 def write_scatter_hole_vs_nd(per_duct: pd.DataFrame, output_dir: Path, section: str) -> None:
+    """Scatter duct hole % against duct nuclear density.
+
+    The confound check. nuclear_density selects the DPT roots AND is a
+    validation feature, so if hole % is strongly related to it, the holeyness
+    correlation may be re-reading the anchor rather than validating it. This
+    figure is how that is inspected by eye; ``cellularity_confound.py`` is the
+    quantitative version.
+
+    Writes scatter_hole_pct_vs_nd.pdf and .png into ``output_dir``.
+    """
     fig, ax = plt.subplots(figsize=(5, 4))
     ax.scatter(
         per_duct["nuclear_density"], per_duct["hole_pct"],
@@ -799,6 +839,15 @@ def write_scatter_hole_vs_nd(per_duct: pd.DataFrame, output_dir: Path, section: 
 
 
 def write_scatter_pt_vs_hole_by_area(per_duct: pd.DataFrame, output_dir: Path, section: str) -> None:
+    """Pseudotime against hole %, coloured by duct AREA rather than by slide.
+
+    The area-confound view. Duct area correlates with both axes, so a gradient
+    running diagonally across this plot means the apparent hole-pseudotime
+    relationship is partly a size effect. That is what the partial correlation
+    conditioning on area quantifies.
+
+    Writes scatter_pt_vs_hole_by_area.pdf and .png. Requires area_um2.
+    """
     fig, ax = plt.subplots(figsize=(5.5, 4))
     sc = ax.scatter(
         per_duct["hole_pct"], per_duct["pseudotime"],
@@ -813,6 +862,15 @@ def write_scatter_pt_vs_hole_by_area(per_duct: pd.DataFrame, output_dir: Path, s
 
 
 def write_scatter_pt_vs_area(per_duct: pd.DataFrame, output_dir: Path, section: str) -> None:
+    """Scatter duct pseudotime against duct area, coloured by slide.
+
+    Plots the relationship that turned out to be a duct-size artifact rather
+    than a finding: rho(pseudotime, area) diverges sharply between sections, and
+    area-matched surrogates reproduce it. Kept because the divergence is real and
+    needs to stay visible, not because it validates anything.
+
+    Writes scatter_pt_vs_area.pdf and .png.
+    """
     fig, ax = plt.subplots(figsize=(5, 4))
     ax.scatter(
         per_duct["area_um2"], per_duct["pseudotime"],
@@ -826,6 +884,16 @@ def write_scatter_pt_vs_area(per_duct: pd.DataFrame, output_dir: Path, section: 
 
 
 def write_small_multiples_per_slide(per_duct: pd.DataFrame, output_dir: Path, section: str) -> None:
+    """One pseudotime-versus-hole panel per slide, on a shared grid.
+
+    The pooled scatter can show a correlation that exists between slides but in
+    no single slide, which is Simpson's paradox and would invalidate the
+    result. Faceting by slide makes that visible: the claim needs the same
+    direction inside most panels, not only in the pooled cloud.
+
+    Writes small_multiples_per_slide.pdf and .png, laid out at most 4 panels
+    wide. Empty trailing cells are left in place.
+    """
     slides = sorted(per_duct["slide_name"].unique())
     n = len(slides)
     ncols = min(4, n) if n > 0 else 1
@@ -863,6 +931,22 @@ def write_outputs(
     n_patches_assigned: int,
     n_ducts_measured: int,
 ) -> None:
+    """Write the v1 holeyness outputs: per-duct CSV, JSON, report, figures.
+
+    The v1 entry point for persistence. Creates ``output_dir`` if needed and
+    writes every artifact the validation produces.
+
+    The polygon column is dropped before the CSV is written; MplPath objects are
+    not serialisable and would otherwise stringify into unusable cells.
+
+    Floats are written at 6 decimal places. Comparisons against these CSVs should
+    match to that precision and no further.
+
+    The counts (n_patches_total, n_patches_assigned, n_ducts_measured) are passed
+    in rather than derived from ``per_duct``, because by this point the frame
+    holds only ducts that survived the joins. Recomputing them here would report
+    the survivors and lose the attrition.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     csv_path = output_dir / "holeyness_per_duct.csv"
@@ -916,6 +1000,18 @@ def write_v2_report(
     agg_sens: dict,
     sampling_artifact: dict,
 ) -> None:
+    """Render the v2 markdown report from the check results.
+
+    Formatting only: every number arrives already computed in the dicts, and
+    nothing is recalculated here. If a value looks wrong, the fault is upstream.
+
+    The v2 report leads with the consistency check against v1. A MISMATCH there
+    invalidates everything below it in the same file, so read that line first.
+
+    Each argument is one check's result dict, and each is required. A missing key
+    inside one raises rather than printing a blank, which is deliberate: a
+    silently empty row in a validation report is worse than a crash.
+    """
     lines = [f"# Holeyness v2 — area-adjusted validation — section {section}", ""]
 
     lines += ["## Consistency check (v2 recompute vs v1 saved output)", ""]
@@ -1065,6 +1161,19 @@ def write_v2_outputs(
     sampling_artifact: dict,
     n_permutations: int,
 ) -> None:
+    """Write the v2 outputs: holeyness_validation_v2.json, the full duct table,
+    and the markdown report.
+
+    ``duct_table_full`` is the pre-exclusion table, every duct that joined to an
+    annotation, including those dropped from the correlations for having too few
+    patches. Persisting it is what makes the exclusion check auditable after the
+    fact; the correlations themselves run on a subset of these rows.
+
+    JSON is written with a ``default=`` hook so numpy scalars survive. The CSV is
+    written at 6 decimal places, matching v1.
+
+    Creates ``output_dir`` if needed. Overwrites without asking.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     result = {
@@ -1098,6 +1207,24 @@ def write_v2_outputs(
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    """CLI entry point for the duct-level holeyness validation.
+
+    Runs one SECTION at a time. The two sections are separate invocations with
+    separate output directories, and nothing here compares them; that is
+    ``holeyness_section_comparison.py`` and ``holeyness_paired_comparison.py``.
+
+    Two modes. Default runs the v1 validation. ``--v2`` adds the area-adjusted
+    analysis and its six checks, beginning with a consistency check that
+    recomputes the v1 correlation and compares. Read that check before anything
+    else in the v2 report.
+
+    Exits with a message rather than a traceback on the expected failure modes:
+    no ducts surviving the UUID join, and fewer than 4 ducts with patches. Both
+    usually mean the annotation directory or the section label is wrong.
+
+    Writes into ``--output-dir`` and returns None. Everything this produces is a
+    file; nothing is returned to the caller.
+    """
     parser = argparse.ArgumentParser(description="Duct-level holeyness validation")
     parser.add_argument("--section",          required=True,
                         help="Section label, e.g. '2M-1'")

@@ -1,34 +1,61 @@
-"""
-Harmony batch correction for phikon PCA features.
+"""Harmony batch correction for Phikon PCA features.
 
-Uses scanpy.external.pp.harmony_integrate (wraps harmonypy) to remove
-slide-level batch effects from the PCA embedding before clustering and DPT.
+Wraps ``scanpy.external.pp.harmony_integrate`` (itself a wrapper over harmonypy)
+to remove slide-level batch effects from the PCA embedding before clustering and
+DPT.
+
+NOT ON THE PRODUCTION PATH. Every recorded run passes ``--batch-method none``, so
+nothing here executed in the reference outputs. Batch correction removes variance
+attributable to the grouping key, and when the biological contrast of interest is
+confounded with that key it removes the signal along with the artifact. The two
+sections differ by fixation, which is exactly such a confound.
 
 Supported batch keys:
-  section_number — "2M-1" vs "2M-2" serial-section grouping (2 groups).
-                   Use this when the section split dominates, as diagnosed
-                   by QC pseudotime violin plots showing PT ≈ 0.8 for all
-                   2M-1 slides and PT ≈ 0.05 for all 2M-2 slides.
-  slide_id       — one batch per slide (16 groups); most aggressive correction.
-  mouse_id       — one batch per mouse (4 groups: 6027/6028/6029/6031).
+  section_number  "2M-1" vs "2M-2", 2 groups. Appropriate when the section split
+                  dominates, as diagnosed by QC pseudotime violins showing PT
+                  around 0.8 for every 2M-1 slide and around 0.05 for every 2M-2
+                  slide.
+  slide_id        one batch per slide, 16 groups. The most aggressive option, and
+                  the one most likely to remove real between-slide biology.
+  mouse_id        one batch per mouse, 4 groups (6027/6028/6029/6031).
 
 Expected slide name format: "6027-4L-2M-1_x5"
-  mouse_id:       "6027"   (first hyphen-separated token, _x5 stripped)
-  section_number: "2M-1"   (last two hyphen-separated tokens, _x5 stripped)
+  mouse_id:       "6027", the first hyphen-separated token with _x5 stripped
+  section_number: "2M-1", the last two tokens with _x5 stripped
+
+That parsing is positional and unvalidated. A slide named outside this convention
+produces a wrong batch label rather than an error. See ``_batch_labels``.
 """
 
 import numpy as np
 
 
 def _batch_labels(slide_names: list, slide_ids: np.ndarray, key: str) -> np.ndarray:
-    """Build a per-patch batch label array from slide names and the batch key."""
+    """Expand per-slide identity into a per-patch batch label array.
+
+    Returns an (N,) array of strings aligned with ``slide_ids``, so it is
+    per-PATCH, not per-slide. Harmony needs one label per row of the embedding.
+
+    Assumes ``slide_ids`` holds valid indices into ``slide_names``. An
+    out-of-range id raises IndexError rather than producing a wrong label.
+
+    Raises ValueError on an unrecognised key rather than defaulting.
+
+    TRAP: the name parsing below is positional and validates nothing. A slide
+    whose name has fewer than two hyphen-separated tokens yields a nonsense
+    section label, and one with extra tokens silently takes the wrong two. Both
+    produce plausible-looking batches that correct against the wrong grouping.
+    """
 
     def _mouse(name):
+        # "6027-4L-2M-1_x5" -> "6027"
         return name.replace("_x5", "").split("-")[0]
 
     def _section(name):
-        parts = name.replace("_x5", "").split("-")   # ["6027", "4L", "2M", "1"]
-        return f"{parts[-2]}-{parts[-1]}"             # "2M-1"
+        # ["6027", "4L", "2M", "1"] -> "2M-1", taken from the END so the
+        # mouse and flank tokens do not shift the result.
+        parts = name.replace("_x5", "").split("-")
+        return f"{parts[-2]}-{parts[-1]}"
 
     if key == "slide_id":
         return slide_ids.astype(str)
@@ -50,25 +77,33 @@ def apply_harmony(
     key: str = "section_number",
     nclust: int = 10,
 ) -> np.ndarray:
-    """
-    Apply Harmony batch correction to PCA features.
+    """Apply Harmony batch correction to PCA features.
 
-    Removes batch effects defined by `key` so that clustering and DPT
-    reflect morphological variation rather than slide-of-origin.  Returns
-    a corrected embedding with the same shape as X_pca.
+    Removes variance attributable to ``key`` so clustering and DPT reflect
+    morphology rather than slide of origin. That is also the risk: whatever is
+    confounded with the key goes with it.
 
     Args:
-        X_pca:       (N, k) raw PCA features from fit_pca().
-        slide_names: List of slide name strings, one entry per slide,
-                     indexed by the integer values in slide_ids.
-        slide_ids:   (N,) int array mapping each patch to its slide index.
-        key:         Batch grouping: "section_number", "slide_id", or "mouse_id".
-        nclust:      Number of internal K-means clusters for Harmony. Default 10
-                     is appropriate for 2–4 batches; harmonypy's default of 100
-                     is over-parameterized here and triggers fast convergence.
+        X_pca: (N, k) raw PCA features from ``fit_pca()``.
+        slide_names: slide name strings, one per slide, indexed by the integers
+            in ``slide_ids``.
+        slide_ids: (N,) int array mapping each patch to its slide index.
+        key: batch grouping, one of "section_number", "slide_id", "mouse_id".
+        nclust: internal K-means cluster count for Harmony. 10 is a deliberate
+            departure from harmonypy's default of 100, which is
+            over-parameterized for 2 to 4 batches and converges immediately.
+            Not exposed on the CLI.
 
     Returns:
-        X_corrected: (N, k) Harmony-corrected embedding, same dtype as X_pca.
+        (N, k) corrected embedding, same shape and dtype as ``X_pca``. Row order
+        is preserved, so it stays aligned with everything else keyed on patch
+        index.
+
+    Raises ImportError if scanpy, anndata or harmonypy is missing, and ValueError
+    if the backend returns a differently shaped array. That shape check is not
+    defensive padding: harmonypy 0.2.0's PyTorch backend really does return a 1-D
+    array on fast convergence, and without the check it would propagate as a
+    silently wrong embedding.
     """
     try:
         import anndata as ad
@@ -80,7 +115,9 @@ def apply_harmony(
         ) from e
 
     try:
-        import harmonypy  # noqa: F401 — raises a clear error if missing
+        # Imported only to fail early with a useful message. scanpy's own error
+        # for a missing harmonypy arrives mid-run and names its internals.
+        import harmonypy  # noqa: F401
     except ImportError:
         raise ImportError(
             "harmonypy is required for Harmony batch correction.\n"
@@ -95,16 +132,20 @@ def apply_harmony(
     for b, c in sorted(zip(unique_batches.tolist(), batch_counts.tolist())):
         print(f"    {b}: {c} patches")
 
-    # Build a minimal AnnData carrier.  harmony_integrate reads obsm["X_pca"]
-    # and writes the corrected result to obsm["X_pca_harmony"].
+    # AnnData exists here only as a carrier: harmony_integrate has no array API
+    # and insists on reading obsm["X_pca"] and writing obsm["X_pca_harmony"].
+    # X is set as well as obsm because AnnData requires it to infer n_obs.
     adata_tmp = ad.AnnData(X=X_pca.astype(np.float32))
     adata_tmp.obsm["X_pca"] = X_pca.astype(np.float32)
     adata_tmp.obs["batch"] = batch
 
     print(f"  Running harmony_integrate (nclust={nclust})...")
-    # harmonypy 0.0.9 (pure numpy) — no GPU path, no shape-squeezing bug.
-    # 0.2.0 was downgraded because its PyTorch backend returns Z_corr as a
-    # 1D array when convergence happens in ≤2 iterations (on both CPU and CUDA).
+    # PIN: harmonypy 0.0.9, which is pure numpy, so no GPU path and no
+    # shape-squeezing bug. 0.2.0 was deliberately downgraded: its PyTorch backend
+    # returns Z_corr as a 1-D array when convergence takes 2 iterations or fewer,
+    # on both CPU and CUDA. Few batches converge that fast, which is exactly this
+    # cohort's situation. The shape check after this call catches it if the pin
+    # is ever lost.
     sc.external.pp.harmony_integrate(
         adata_tmp, key="batch", nclust=nclust,
     )

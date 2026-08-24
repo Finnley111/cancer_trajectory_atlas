@@ -49,10 +49,18 @@ def _load_default_paths():
 # NDPI to PNG conversion
 
 def convert_ndpi_to_left_half_png(cfg: PipelineConfig):
-    """
-    Convert all NDPI files to PNG, keeping only the left half.
-    Your NDPIs contain two copies of the same slide side by side —
-    annotations were done on the left, so we discard the right.
+    """Convert every NDPI to PNG, keeping only the left half.
+
+    These NDPIs contain two copies of the same slide side by side. Annotation
+    was done on the left copy, so the right is discarded.
+
+    Writes one PNG per slide into ``cfg.png_dir``, plus slide_dimensions.json
+    recording each slide's FULL level-0 dimensions. That file is what lets
+    ratio-space annotations be scaled later, so a conversion that succeeds
+    without writing it leaves the annotations unusable.
+
+    The invariant every downstream coordinate transform relies on:
+    ``cropped_width == original_full_width // 2``.
     """
     ndpi_dir = Path(cfg.ndpi_dir)
     out_dir = Path(cfg.png_dir)
@@ -361,7 +369,7 @@ def run_pipeline(cfg: PipelineConfig):
         orig_count = len(patches)
 
         # ── Feature cache contract ────────────────────────────────────────────
-        # The cache always stores FULL (uncapped) features — the cap is applied in
+        # The cache always stores FULL (uncapped) features. The cap is applied in
         # Pass 2, after the cohort median is known. Do not sample here: sampling
         # before caching would bake a particular cap into the cache file and make
         # it invalid for any run with a different slide subset.
@@ -370,8 +378,9 @@ def run_pipeline(cfg: PipelineConfig):
         # between a stale cache and silently wrong features, so do not weaken it,
         # wrap it in a try, or downgrade it to a warning.
         #
-        # WHAT IT CATCHES: any change that alters how many patches a slide yields
-        # — --patch-size, --stride, --min-roi-coverage, edited annotations, and
+        # WHAT IT CATCHES: any change that alters how many patches a slide
+        # yields, namely --patch-size, --stride, --min-roi-coverage, edited
+        # annotations, and
         # (usually) --stain-method, since normalization runs before the white and
         # HSV tissue filters and therefore changes which patches survive.
         #
@@ -507,7 +516,7 @@ def run_pipeline(cfg: PipelineConfig):
 
     scaler, pca, X_pca = fit_pca(features, variance_target=0.95)
 
-    # Batch correction backend — applied in PCA space before clustering and
+    # Batch correction backend, applied in PCA space before clustering and
     # DPT so both use the same corrected representation. cfg.batch_method
     # overrides cfg.use_harmony when explicitly set; None falls back to the
     # legacy use_harmony flag so existing job scripts are unaffected.
@@ -597,7 +606,7 @@ def run_pipeline(cfg: PipelineConfig):
     # Default "cellularity" is the production rule and passes root_indices=None,
     # so compute_dpt_multi_root behaves exactly as it did for v2. "holeyness"
     # anchors instead on expert-annotated per-duct hole %, which is derived from
-    # hand annotation rather than from the pipeline's own pixels — that is what
+    # hand annotation rather than from the pipeline's own pixels. That is what
     # removes the circularity of rooting on nuclear_density while nuclear_density
     # is also a validation feature and the cellularity-confound covariate.
     holeyness_root_report = None
@@ -621,7 +630,7 @@ def run_pipeline(cfg: PipelineConfig):
             max_roots_per_duct=cfg.holeyness_max_roots_per_duct,
             allow_degenerate_pool=cfg.holeyness_allow_degenerate_pool,
         )
-        # Topology gate. Raises if the roots straddle disconnected components —
+        # Topology gate. Raises if the roots straddle disconnected components,
         # the condition that makes multi-root DPT clamp and collapse. Runs BEFORE
         # DPT so the job fails in seconds rather than after the full root loop.
         holeyness_root_report["topology"] = assert_roots_connected(adata, root_indices)

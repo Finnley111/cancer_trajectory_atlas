@@ -211,7 +211,8 @@ class AtlasProjector:
         if self.adata_train_ is not None:
             self.adata_train_.write(out / "adata_train.h5ad")
 
-        # Metadata — cast numpy scalars to plain Python types for JSON serialization.
+        # Cast numpy scalars to plain Python types; json.dump cannot serialize
+        # np.float32 or np.int64.
         metadata = {
             "n_training_samples": int(len(self.adata_train_)) if self.adata_train_ is not None else 0,
             "pca_components": int(self.pca_.n_components_) if self.pca_ else None,
