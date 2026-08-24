@@ -32,6 +32,14 @@ permutation tests.
   rule only fixes which end is called zero (§5.4).
 - Not causally interpretable with respect to fixation. Fixation is perfectly collinear
   with section in this cohort.
+- `hole_pct` is **not fixation-invariant**, because Carnoy's deforms ductal
+  architecture anisotropically — the lumen collapses to roughly a quarter of what
+  the duct does (5.48× vs 1.64×, 8/8 glands). That is a **result** in its own
+  right (`docs/ANCHOR_VALIDATION_RECORD.md` §3.12), not merely a limitation.
+  Within-section validation is unaffected, and the cross-section replication still
+  holds — Spearman ignores monotone rescaling — but it should be stated as *the
+  correlation replicates despite `hole_pct` being systematically rescaled between
+  conditions*. See `docs/KNOWN_ISSUES.md` §2.1.
 
 ---
 
@@ -93,7 +101,29 @@ job scripts share `$SCRATCH/data/features_cache` and all pass `--model phikon
 --patch-size 112 --stride 96 --stain-method none`, so this holds today. It is an
 unenforced convention, not a checked constraint.
 
-### 2.3 Patches → slides → ducts
+### 2.3 Slides → glands — the 16 slides are 8 matched pairs
+
+**Every mouse-flank combination (a *gland*) contributes exactly one slide to each section:**
+6027 / 6028 / 6029 / 6031 × 4L / 4R. So the 16 slides are **8 matched pairs**, not 16
+independent samples. Verified empirically from the per-duct tables by
+`analysis/gland_pairing_audit.py`, which refuses to proceed on an unbalanced design.
+
+**Nothing in `run_all.py` knows this.** The pipeline treats slides as independent throughout —
+`slide_ids`, the per-slide cap, the feature cache, LOO. That is fine for extraction and
+embedding, where slides genuinely are processed independently, but it means **any downstream
+statistical test must supply the pairing itself.**
+
+Consequences, and where they bite:
+
+| analysis | correct unit | status |
+|---|---|---|
+| between-section comparison | **gland** (8 pairs, 2⁸ = 256 sign flips) | corrected 2026-08-23 |
+| within-section bootstrap | slide | unaffected — no two slides in a section share a gland |
+| full-atlas 16-slide LOO | **gland** | **leaks** — holding out a slide leaves its partner in training |
+
+See `docs/KNOWN_ISSUES.md` §1.1–1.3.
+
+### 2.4 Patches → slides → ducts
 
 - Patches carry `slide_name` and `(x, y)` in cropped-PNG space. `slide_ids` indexes into
   a `slide_names` list.

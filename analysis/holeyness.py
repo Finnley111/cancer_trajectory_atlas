@@ -382,7 +382,25 @@ def _safe_spearman(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
 
 
 def _partial_spearman(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> float:
-    """Algebraic partial Spearman: rho(x, y | z). Same formula as cellularity_confound.py."""
+    """Algebraic partial Spearman: rho(x, y | z).
+
+    DUPLICATION, DELIBERATELY LEFT IN PLACE. Four partial-Spearman implementations
+    exist in this repo and all four agree: worst pairwise disagreement 1.04e-13
+    across clean data, 1-dp ties, 0-dp ties, n=40, and a near-collinear case, which
+    is the regime where the algebraic and rank-residual forms separate first.
+
+        holeyness._partial_spearman            algebraic three-correlation formula
+        holeyness._partial_spearman_multi      rank-residual, handles many controls
+        cellularity_confound.partial_spearman  algebraic, same formula
+        holeyness_v3_significance._partial_rho dispatcher over the two above
+
+    They were NOT merged, because the verification above is on synthetic data. The
+    real per-duct tables live on the cluster, and every one of these functions feeds
+    a recorded value that the regression suite checks. Consolidating before that
+    baseline exists would turn any later failure into a bisection problem. Merge
+    after the regression suite has run, keeping _partial_spearman_multi as the
+    survivor since it is the only one accepting more than one control.
+    """
     valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
     if valid.sum() < 10:
         return float("nan")
@@ -486,6 +504,10 @@ def _partial_spearman_multi(x: np.ndarray, y: np.ndarray, controls: list) -> flo
     residuals — the standard rank-based generalization of partial Spearman
     beyond one control. With a single control this is algebraically equivalent
     to _partial_spearman.
+
+    One of four implementations in this repo; see _partial_spearman's docstring for
+    the full list and for why they were not merged. This is the one to keep if they
+    ever are, since it is the only one that accepts more than one control.
     """
     stacked = np.column_stack([x, y] + list(controls))
     valid = np.all(np.isfinite(stacked), axis=1)

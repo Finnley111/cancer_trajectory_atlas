@@ -33,8 +33,8 @@ When reading `archive/README.md`, treat its phase numbers as belonging to that p
    and was deleted before the 2026-08-12 pass began. `config.py` has never existed. The
    claim survives only in `PROJECT_STATE.md`, which is stale on this point. Phase 10's
    instruction to archive it cannot be carried out. Its orphaned companions
-   `train_test_config.json` and `example_config.json` remain in the tree and are read by
-   nothing (§4.3).
+   `train_test_config.json` and `example_config.json` were read by nothing and were
+   archived on 2026-08-24 (§4.3).
 2. *"`paths.json` `annotations` points at `data/annotations` while job scripts use
    `data/annotations_ratio`."* — **Already fixed.** `paths.json` now reads
    `"annotations": "~/cancer_trajectory_atlas/data/annotations_ratio"`.
@@ -144,6 +144,21 @@ condition the brief expected to find does not exist.
 These are archive candidates for Phase 10, but note `recover_loo.py` is an operational
 recovery tool — archiving it removes a rescue path for a long array job. Recommend
 keeping it and documenting rather than archiving. **No action taken in this phase.**
+
+**Outcome of the 2026-08-24 archival pass: all four kept, none archived.** Each was
+grepped across the whole tree (`.py`, `.sh`, `.md`, `.json`, `.txt`, `.ipynb`) rather
+than only against `run_all.py`, and each turned out to have a reason to stay:
+
+| Module | Why it was kept |
+|---|---|
+| `analysis/loo_summary_scvi.py` | The commented-out line at `jobs/submit_loo_array_scvi.sh:30` is not dead code, it is the script's documented follow-up command. `jobs/submit_loo_array.sh:17` uses the identical convention for the live `loo_summary`, so archiving this one would break a convention the sibling script still relies on. |
+| `analysis/recover_loo.py` | Operational rescue path for a partially completed LOO array. Unreferenced by design: it exists for the case where the array did not finish. |
+| `converters/ndpi_to_img.py` | Documented for direct use in `README.md:253`. |
+| `converters/tiff_to_img.py` | Documented for direct use in `README.md:254`. |
+
+"Unreachable from `run_all.py`" turned out to be the wrong archival test for this repo.
+Reachability here runs through job scripts and through the README, and two of the four
+modules exist precisely because the normal path failed.
 
 ---
 
@@ -265,10 +280,14 @@ Both are diagnostics whose value is archival rather than programmatic. **No acti
 proposed** — deleting a provenance record to satisfy a "nothing reads it" criterion would
 be a net loss.
 
-### 4.3 Orphaned config files at repo root
+### 4.3 Orphaned config files at repo root — ARCHIVED 2026-08-24
 
-`train_test_config.json` and `example_config.json` are read by nothing. They are
-leftovers from the deleted `run_train_test.py` workflow. Archive candidates for Phase 10.
+`train_test_config.json` and `example_config.json` were read by nothing. They were
+leftovers from the deleted `run_train_test.py` workflow.
+
+**Resolved.** A repo-wide grep across `.py`, `.sh`, `.md`, `.json` and `.txt` found zero
+readers; the only mentions anywhere were in this document. Both files now live in
+`archive/config/`. Restoring either is a file move. See `archive/README.md`.
 
 ---
 
@@ -294,6 +313,30 @@ merely in theory.
 Caveat: `_partial_spearman_multi` is the only one accepting >1 control, so it must be the
 survivor, and `analysis/root_sensitivity.py:895` `partial_with_permutation` wraps a
 partial correlation with permutation machinery and is *not* a duplicate.
+
+**Outcome of the 2026-08-24 pass: NOT consolidated, left in place and cross-referenced.**
+The agreement was re-verified over a wider set of cases than the two above:
+
+| case | max pairwise disagreement |
+|---|---|
+| clean, n=1602 | 5.551e-17 |
+| clean, n=1360 | 1.735e-18 |
+| ties at 1 dp | 0.000e+00 |
+| ties at 0 dp (heavy) | 1.162e-16 |
+| small, n=40 | 1.041e-16 |
+| near-collinear controls | 1.044e-13 |
+
+Worst case 1.044e-13, inside the brief's 1e-12 threshold. The brief permits merging only
+where identity is verified **on existing inputs**, and these six cases are synthetic: the
+real per-duct tables live on the cluster, not in the repo, so that condition was not met.
+Every one of these four functions feeds a number the verification suite will assert on, so
+the brief's sanctioned alternative was taken instead. Each call site now carries a
+cross-reference naming the other implementations and recording the measured agreement, so
+a reader who finds one can find the rest.
+
+The near-collinear figure is the one to watch. It is three orders of magnitude looser than
+the others, which is the algebraic form's denominator going small, and it is the reason to
+prefer `_partial_spearman_multi` if this is ever revisited with real inputs in hand.
 
 ### 5.2 Safe-Spearman helpers — nine copies, two behaviours
 
@@ -363,10 +406,10 @@ Reported so the plan can be adjusted before work starts, not discovered mid-phas
 | **4** (patching docblock) | `load_roi_polygons` already carries a substantial coordinate-system docstring (`patching.py:80-119`). Verify sufficiency rather than assume absence. |
 | **5** (cache contract) | Real work; not yet examined in detail. |
 | **6** (clustering/harmony/scVI) | Real work. Note `clustering.py`'s module docstring already documents the multi-graph situation thoroughly. |
-| **7** (`--root-cluster` / `--root-metric` dead flags) | Already marked vestigial in `pipeline_config.py` with an extensive comment block. Decision needed: remove, or leave as documented no-ops. The config comment warns that `run_individual.py` has its **own live** `--root-cluster` that must not be touched. |
+| **7** (`--root-cluster` / `--root-metric` dead flags) | Already marked vestigial in `pipeline_config.py` with an extensive comment block. Decision needed: remove, or leave as documented no-ops. The config comment warns that `run_individual.py` has its **own live** `--root-cluster` that must not be touched. **Resolved 2026-08-24: left as documented no-ops.** Both the argparse help and the dataclass field already carry "VESTIGIAL NO-OP — accepted but never read", which is what the current brief asks for. Removal was rejected because it breaks any archived command line that still passes the flag, for no gain. |
 | **8** (archive `validation/annotations.py`) | **Target does not exist.** Phase reduces to whatever else validation needs. |
-| **9** (consolidate duplicates) | Viable for §5.1 (verified identical). Must not touch §5.3. Must preserve the parameterised guard in §5.2. |
-| **10** (archive `run_train_test.py`, review jobs) | **Primary target does not exist.** Job-script review is still real: 79 scripts, and the v3/timepoint families are likely superseded. Orphaned root configs (§4.3) are candidates. |
+| **9** (consolidate duplicates) | Viable for §5.1 (verified identical). Must not touch §5.3. Must preserve the parameterised guard in §5.2. **Resolved 2026-08-24: not consolidated.** The identity criterion is "on existing inputs" and the real inputs are on the cluster; see §5.1 for the six-case verification and the reasoning. |
+| **10** (archive `run_train_test.py`, review jobs) | **Primary target does not exist.** Job-script review is still real: 79 scripts, and the v3/timepoint families are likely superseded. Orphaned root configs (§4.3) are candidates. **Partly resolved 2026-08-24:** the two orphaned root configs are archived. The 79-script review has not been done and is still open. |
 
 ---
 
@@ -378,3 +421,20 @@ Reported so the plan can be adjusted before work starts, not discovered mid-phas
 | `archive/reports/codebase_inventory_2026-08-12.md` | **Created** — verbatim copy of the prior inventory, preserved before supersession |
 
 No source file was created, modified, moved, or archived.
+
+---
+
+## 9. Addendum — what the 2026-08-24 dead-code pass changed here
+
+This document is a Phase 0 survey and is kept as one. Where a later pass acted on a
+finding, the outcome is recorded next to the original finding rather than in a separate
+log, so a reader following a citation lands on the current answer: §2.4 (four unreachable
+modules, all kept), §4.3 (two root configs, archived), §5.1 (four partial-Spearman
+implementations, not merged), §7 rows 7, 9 and 10.
+
+Two of this document's own recommendations did not survive contact with a full grep. The
+"archive candidates for Phase 10" framing in §2.4 assumed reachability from `run_all.py`
+was the right test; it is not, in a repo where job scripts and the README are both entry
+points. And §5.1's "consolidation is viable" was written against the numerical criterion
+alone, without weighing that the criterion says *on existing inputs* and the inputs are
+not in the repo.

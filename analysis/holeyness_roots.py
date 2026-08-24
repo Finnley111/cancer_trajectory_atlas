@@ -128,6 +128,14 @@ def assign_patches_to_ducts_overlap(
     Raises ImportError with an actionable message if shapely is missing rather
     than silently falling back to the centre rule — a silent fallback would make
     the two configurations indistinguishable in the output.
+    
+    DUPLICATE OF holeyness_final.run_overlap_sensitivity's inner loop, and provably
+    so rather than approximately. That version compares ``area / patch_area`` where
+    this one compares ``area``; patch_area is a positive constant, so the argmax and
+    the threshold test are identical expressions. Both repair invalid polygons with
+    ``buffer(0)``. They were not merged because each sits on a path that produces a
+    recorded value, and the equivalence argument is algebraic rather than tested on
+    the real duct tables. Merge after the regression suite establishes a baseline.
     """
     try:
         from shapely.geometry import Polygon, box

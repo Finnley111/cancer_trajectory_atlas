@@ -376,7 +376,13 @@ def run_overlap_sensitivity(args: argparse.Namespace, v1_per_duct_csv: pd.DataFr
     changes the primary correlations. Patch geometry (x, y, patch_size from
     results.csv) and duct polygons (via holeyness.load_duct_polygons, unmodified)
     are both already loadable — no new raw-data dependency. Skips gracefully (rather
-    than approximating) if raw inputs weren't supplied or shapely isn't available."""
+    than approximating) if raw inputs weren't supplied or shapely isn't available.
+    The inner assignment loop is duplicated in
+    holeyness_roots.assign_patches_to_ducts_overlap, which compares absolute overlap
+    area where this compares the fraction of the patch. Dividing by the constant
+    patch_area leaves the argmax and the threshold unchanged, so the two are
+    equivalent. See that function for why they were left separate.
+    """
     raw_paths = [args.export, args.annotation_dir, args.slide_dimensions, args.results, args.slide_list]
     if any(p is None for p in raw_paths):
         return {

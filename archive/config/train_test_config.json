@@ -1,0 +1,56 @@
+{
+    "training_slides": [
+        {"image": "data/MCF7_x5_cropped/6027-4L-2M-1_x5.png", "annotation": "data/annotations/6027-4L-2M-1.json"},
+        {"image": "data/MCF7_x5_cropped/6027-4L-2M-2_x5.png", "annotation": "data/annotations/6027-4L-2M-2.json"},
+        {"image": "data/MCF7_x5_cropped/6027-4R-2M-1_x5.png", "annotation": "data/annotations/6027-4R-2M-1.json"},
+        {"image": "data/MCF7_x5_cropped/6027-4R-2M-2_x5.png", "annotation": "data/annotations/6027-4R-2M-2.json"},
+        {"image": "data/MCF7_x5_cropped/6028-4L-2M-1_x5.png", "annotation": "data/annotations/6028-4L-2M-1.json"},
+        {"image": "data/MCF7_x5_cropped/6028-4L-2M-2_x5.png", "annotation": "data/annotations/6028-4L-2M-2.json"},
+        {"image": "data/MCF7_x5_cropped/6028-4R-2M-1_x5.png", "annotation": "data/annotations/6028-4R-2M-1.json"},
+        {"image": "data/MCF7_x5_cropped/6028-4R-2M-2_x5.png", "annotation": "data/annotations/6028-4R-2M-2.json"},
+        {"image": "data/MCF7_x5_cropped/6029-4L-2M-1_x5.png", "annotation": "data/annotations/6029-4L-2M-1.json"},
+        {"image": "data/MCF7_x5_cropped/6029-4L-2M-2_x5.png", "annotation": "data/annotations/6029-4L-2M-2.json"},
+        {"image": "data/MCF7_x5_cropped/6029-4R-2M-1_x5.png", "annotation": "data/annotations/6029-4R-2M-1.json"},
+        {"image": "data/MCF7_x5_cropped/6029-4R-2M-2_x5.png", "annotation": "data/annotations/6029-4R-2M-2.json"}
+    ],
+
+    "test_slides": [
+        {"image": "data/MCF7_x5_cropped/6031-4L-2M-1_x5.png", "annotation": "data/annotations/6031-4L-2M-1.json"},
+        {"image": "data/MCF7_x5_cropped/6031-4L-2M-2_x5.png", "annotation": "data/annotations/6031-4L-2M-2.json"},
+        {"image": "data/MCF7_x5_cropped/6031-4R-2M-1_x5.png", "annotation": "data/annotations/6031-4R-2M-1.json"},
+        {"image": "data/MCF7_x5_cropped/6031-4R-2M-2_x5.png", "annotation": "data/annotations/6031-4R-2M-2.json"}
+    ],
+
+    "output_dir": "results/atlas_v2_train_test",
+
+    "model": "phikon",
+    "patch_size": 112,
+    "stride": 96,
+
+    "stain_normalization_method": "reinhard",
+    "stain_reference_image": "data/MCF7_x5_cropped/6027-4L-2M-1_x5.png",
+
+    "clustering_method": "leiden",
+    "leiden_neighbors": 15,
+    "leiden_resolution": 1.0,
+    "hdbscan_min_cluster": 50,
+    "hdbscan_min_samples": 10,
+    "pca_variance": 0.95,
+
+    "root_cluster": "auto",
+    "n_diffmap_comps": 10,
+    "dpt_neighbors": 30,
+
+    "n_permutations": 1000,
+    "use_stardist": false,
+
+    "annotation_format": "geojson",
+    "annotation_coordinate_space": "ratio",
+    "label_order": {},
+
+    "ignore_right_half": false,
+    "sat_thresh": 15,
+    "val_thresh": 230,
+    "white_thresh": 220,
+    "white_frac": 0.70
+}

@@ -10,6 +10,13 @@ work or defend it. Every number below comes from a completed run; nothing is pro
 **Data.** 16 whole-slide H&E images of MCF7 xenograft tissue at 5× downsampling, split into two
 tissue **sections** of 8 slides each: **2M-1** (Carnoy's-fixed) and **2M-2** (PFA-fixed).
 
+> **THE 16 SLIDES ARE 8 MATCHED PAIRS, NOT 16 INDEPENDENT SAMPLES.** Every mouse-flank
+> combination (a *gland*) contributes exactly one slide to each section: 6027/6028/6029/6031
+> x 4L/4R. Verified empirically from the per-duct tables, not from filenames
+> (`analysis/gland_pairing_audit.py`). **This was overlooked in every analysis before
+> 2026-08-23** and it changes the correct unit of analysis for any between-section
+> comparison. See section 3.11.
+
 **Pipeline.** 112 px patches → six morphological descriptors per patch → PCA → k-NN graph →
 diffusion map → diffusion pseudotime (DPT) from 20 root patches, median-aggregated across roots,
 min–max normalised to [0,1].
@@ -320,6 +327,137 @@ lowest-density patches specifically. A duct-level average could hide a differenc
 extreme patches sit. The remaining cheap check is the duct-size distribution of the 20 root patches
 per section.
 
+### 3.11 The matched-pair correction — `gland_pairing_audit` + `holeyness_paired_comparison`
+
+**The defect.** The between-section comparison (SS3.8) permuted all C(16,8) = 12,870 ways of
+splitting 16 slides into two groups of 8. That null treats the sections as independent groups,
+so it admits between-gland and between-mouse variation the paired design already controls. It
+is mis-specified and its minimum detectable differences were inflated.
+
+**The correction.** For each gland, take the within-gland difference (Carnoy's minus PFA) of
+the statistic. Under the null that section membership is irrelevant, each of the 8 differences
+is equally likely to carry either sign, so the exact null is the **2^8 = 256 sign-flip
+permutations**, enumerated exhaustively. Balance gate confirmed 8 glands, one slide each per
+section.
+
+**The p-value floor is 2/256 = 0.0078**, the observed sign vector and its mirror. A paired p at
+that floor is **not weaker** than the unpaired 1.554e-4 — it is the same evidence at coarser
+resolution. The unpaired test resolved further only by assuming an independence that is false.
+
+| estimand | unpaired diff / p / MDD | paired diff / p / MDD | reading |
+|---|---|---|---|
+| `rho(pt, hole_pct)` | +0.0857 / 0.461 / 0.250 | +0.0392 / 0.578 / **0.141** | same conclusion, 44% tighter |
+| `rho(pt, hole \| area)` | -0.1065 / 0.330 / 0.205 | **-0.1721 / < 0.0078** / 0.163 | **conclusion changes** — but derivative, see below |
+| `rho(area, pseudotime)` | +0.5168 / 1.554e-4 / 0.353 | +0.5236 / **< 0.0078** / 0.422 | same conclusion, per-gland visibility |
+| normal-scores variant | +0.0631 / 0.313 / 0.133 | +0.0392 / 0.578 / 0.141 | **collapses onto the raw estimand** |
+
+**Three things this established that were not obvious.**
+
+1. **At n = 8 the paired test is a sign test.** With all eight differences sharing a sign the
+   observed mean is the maximum attainable, so `n_ge = 2` and **p = 0.0078 exactly, regardless
+   of magnitude** — verified on three magnitude profiles including one where seven differences
+   are 0.001 and the eighth is 0.9. Power comes from *consistency*, not effect size. Both
+   significant results here are 8/8 sign agreement.
+2. **Pairing does not uniformly improve power.** MDD ratios were 0.562, 0.794, **1.195**,
+   **1.061**. It tightens when gland effects are shared and *widens* when the within-gland
+   differences are themselves heterogeneous. The best-powered unpaired test (normal-scores,
+   MDD 0.133) was already tighter than the best paired test (0.141). **The paired correction's
+   value is a correctly specified null, not raw power.**
+3. **The normal-scores variant collapses onto the raw estimand exactly** (max |diff| 0.00e+00
+   across all 16 gland-sections). Spearman is invariant to monotone transforms, normal scores
+   are monotone in rank, and each gland-section *is* a single slide — so there are no
+   between-slide offsets left for the variant to remove. The paired design already absorbed
+   what that variant was invented to fix.
+
+**`partial_given_area`'s new significance is derivative, not independent evidence.** It is
+substantially a restatement of the `rho(area, pseudotime)` divergence, which SS3.2 showed is an
+anchor artifact. Verified algebraically — the partial-correlation formula reproduces both
+reported values to four decimals, and holding `rho(area, pt)` at zero in both sections while
+changing nothing else flips the partial difference from **-0.1064 to +0.0951**, close to the
+raw difference of +0.0857:
+
+| section | `rho(pt,hole)` | `rho(area,pt)` | partial (computed) | partial (reported) |
+|---|---|---|---|---|
+| 2M-1 | 0.2763 | **+0.4325** | +0.1315 | +0.1315 |
+| 2M-2 | 0.1906 | **-0.0844** | +0.2380 | +0.2379 |
+
+Conditioning on area does heavy work in 2M-1 and almost none in 2M-2. **Report it as
+detected-but-derivative.**
+
+### 3.12 RESULT — differential fixation shrinkage of ductal architecture
+
+**This is a finding, not a caveat.** It is a quantitative, well-powered measurement of what
+Carnoy's fixation does to ductal architecture, made against a within-animal control, and it is
+the most concrete thing this project has produced. It belongs in the manuscript as a result. The
+consequence for `hole_pct` comparability (below) follows from it — but the measurement comes
+first.
+
+The paired design makes it possible: the same gland split across two fixations, so a
+**within-gland ratio isolates the fixation effect** from every between-animal and between-gland
+source of variation.
+
+| quantity | Carnoy's < PFA | median ratio | fold change PFA/Carnoy's | exact sign-test p |
+|---|---|---|---|---|
+| duct area | **8/8** | 0.609 | **1.64x** | **0.0078** |
+| hole area | **8/8** | 0.182 | **5.48x** | **0.0078** |
+| hole % | **8/8** | 0.285 | **3.50x** | **0.0078** |
+| n ducts | 3/8 | 1.051 | 0.95x | 0.73 |
+| log-area SD | 3/8 | 1.018 | 0.98x | 0.73 |
+
+Carnoy's is coagulative and shrinks tissue; PFA cross-links and preserves volume. The direction
+and the unanimity are exactly what that chemistry predicts.
+
+**This reconciles with, and does not contradict, the earlier "annotation behaves identically"
+finding** (SS3.8). That was about the *relationship* `rho(area, hole_pct)` — +0.386 vs +0.361,
+preserved. A monotone rescaling preserves Spearman exactly. What shifts here is the *level* of
+both variables. Both statements are true simultaneously.
+
+**The shrinkage is strongly ANISOTROPIC — this is the headline.**
+
+Hole area shrinks **5.48x** while duct area shrinks only **1.64x**. The ratio of those ratios —
+hole-area shrink over duct-area shrink — is **0.261 median, 8/8 glands, exact sign-test
+p = 0.0078**. **Under Carnoy's the lumen collapses to roughly a quarter of what the duct as a
+whole does.** Epithelium is solid and resists; lumen is fluid-filled and does not. The
+architecture is not scaled down uniformly, it is deformed, with the open space taking almost all
+of the loss.
+
+That is a statement about tissue, measured on matched pairs, at the design's maximum
+significance. It stands on its own.
+
+**Consequence (a): `hole_pct` is not fixation-invariant.** Because the numerator and denominator
+shrink by different factors, `hole_pct` under Carnoy's and `hole_pct` under PFA **are not the
+same quantity**. The validation *within* each section is unaffected — `hole_pct` still ranks
+ducts correctly there — but any cross-section claim about it must say so. See the note on
+replication in section 8.
+
+**Consequence (b): the shrinkage does NOT explain the `rho(area, pseudotime)` divergence.** Two separate
+findings:
+
+- **Per gland: ruled out by construction.** Spearman is invariant to any monotone transform, so
+  compressing a gland's areas — by a constant or a power law — leaves its within-gland
+  `rho(area, pt)` exactly unchanged. Verified on the real data: rank-normalising area within
+  each gland moved the per-gland correlations by **0.00e+00**. The 8/8 divergence is built from
+  exactly these correlations.
+- **Pooled: measured, and it survives.** Removing within-gland area scale leaves the pooled
+  difference at +0.4901, **95%** of its original +0.5168.
+
+**The remaining escape hatch is narrow.** Neither test rules out a *non-monotone* distortion —
+compression that reorders ducts by size rather than rescaling them. That cannot be tested
+directly, because the two halves of a gland are different physical slides with different ducts
+and there is no duct-to-duct correspondence. But **log-area SD is unchanged** (ratio 1.018,
+3/8, p = 0.73), which is what a pure multiplicative shrink predicts and is the closest
+available evidence that the distortion is monotone.
+
+**An untested hypothesis worth recording.** If PFA preserves open lumens while Carnoy's
+collapses them, PFA should yield more genuinely-empty patches — and the DPT anchor selects the
+20 *lowest-density* patches. That would place PFA's anchor on open lumen or background and
+Carnoy's elsewhere, which is a mechanism for `rho(area, pt)` differing by section. Consistent
+with two observations already on record: 2M-2's 20 roots all sit at `nuclear_density` exactly
+0.0 with **none inside any Tumor annotation** (SS4, error #2), and zero-density patches are
+0.208% of 2M-2 against 0.133% of 2M-1 — a **1.56x** ratio against the 1.64x duct-area ratio.
+**Suggestive only**: n = 21 and n = 11 are far too small to carry weight, and the coincidence of
+ratios could easily be chance. Recorded as the leading candidate explanation, not a finding.
+
 ---
 
 ## 4. Error log
@@ -426,7 +564,19 @@ positions — not for whether the anchor is healthy.
   both sections (rho 0.92 / 0.79 at the pre-specified threshold, 0.98 / 0.96 at the annotator's own,
   unbiased in magnitude near threshold 200).
 - The external validation is **positive in both sections under every estimand**, with no evidence
-  the sections differ.
+  the sections differ. **State the replication carefully:** `hole_pct` is systematically
+  rescaled between the two conditions (3.50x higher under PFA, 8/8 glands), so the correlation
+  replicates across sections *in which the measured variable has been rescaled*. Spearman is
+  invariant to monotone rescaling, so the comparison is valid — and the replication is arguably
+  **strengthened** by surviving it: the relationship holds under two different fixations that
+  measurably deform the tissue. Say this wherever the replication is claimed, not only in a
+  caveats list.
+- **RESULT — Carnoy's fixation deforms ductal architecture anisotropically.** On matched tissue,
+  PFA ducts are **1.64x larger in area** and carry **5.48x more hole area**; the lumen collapses
+  to roughly a quarter of what the duct does (anisotropy **0.261**, 8/8 glands, p = 0.0078).
+  Duct counts and log-area spread are unchanged, so this is neither a coverage artifact nor a
+  change in the shape of the size distribution. **This is a manuscript result, not a
+  limitation.** See section 3.12.
 - The defect was the **root rule**, not the annotation. The bottom-1–3% rule is duct-size-extreme,
   and that extremity — not holeyness — produced Phase 2's headline result.
 - The eccentricity concern is dead outside the diffusion map, and the late-subcluster split is a
@@ -495,6 +645,8 @@ not be below a known plateau by default.
 | `analysis/holeyness_asymmetry.py` | Why does validation differ by section? | `holeyness_asymmetry_diagnostic/` |
 | `analysis/holeyness_section_comparison.py` | Four-cell table + exact C(16,8) test | `holeyness_section_comparison/` |
 | `analysis/holeyness_repaired_sensitivity.py` | Repaired-axis sensitivity, side by side | `holeyness_repaired_sensitivity/` |
+| `analysis/gland_pairing_audit.py` | Establish the 8x2 matched-pair design, gate on balance | `holeyness_section_comparison_paired/` |
+| `analysis/holeyness_paired_comparison.py` | Paired between-section test, fixation shrinkage, isotropy | `holeyness_section_comparison_paired/` |
 
 All are read-only on existing run trees; none re-embeds or re-runs the pipeline. Alternative anchors
 re-run only `sc.tl.dpt` on the stored graph and diffusion map. Every module was verified against

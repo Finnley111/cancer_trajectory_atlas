@@ -97,7 +97,11 @@ def _partial_rho(pt: np.ndarray, hole: np.ndarray, controls: list) -> float:
 def check_consistency_with_v2(per_duct: pd.DataFrame, v2_json: dict, tol: float = 1e-4) -> dict:
     """Recompute raw + area-adjusted partial from v1's CSV and compare against
     v2's saved reference numbers. Gates whether the rest of this report should
-    be trusted."""
+    be trusted.
+    Dispatcher, not a fifth implementation: one control goes to
+    holeyness._partial_spearman, more than one to _partial_spearman_multi. See the
+    former's docstring for the duplication note.
+    """
     pt   = per_duct["pseudotime"].values
     hole = per_duct["hole_pct"].values
     area = per_duct["area_um2"].values

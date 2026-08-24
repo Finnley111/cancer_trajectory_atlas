@@ -15,6 +15,16 @@ out to still be needed, move it back rather than copying it.
 
 ## Contents
 
+### `config/train_test_config.json`, `config/example_config.json` - archived 2026-08-24, Phase 1
+
+Two JSON config files from the repo root, read by nothing.
+
+**Why archived:** leftovers from the deleted top-level `run_train_test.py` workflow. A repo-wide
+grep across `.py`, `.sh`, `.md`, `.json` and `.txt` found zero readers; the only mentions were in
+`reports/codebase_inventory.md`, which listed them as orphans. Their consumer was removed before
+the 2026-08-12 cleanup began. Restoring either is a file move.
+
+
 ### `reports/codebase_inventory_2026-08-12.md` — preserved 2026-08-22, Phase 0
 
 The previous Phase 0 inventory, dated 2026-08-12 and covering 64 real modules. Preserved

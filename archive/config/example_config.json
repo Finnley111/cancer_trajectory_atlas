@@ -1,0 +1,56 @@
+{
+    "training_slides": [
+        {"image": "data/MCF7_x5_cropped/slide_01.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_02.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_03.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_04.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_05.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_06.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_07.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_08.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_09.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_10.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_11.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_12.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_13.png", "annotation": null},
+        {"image": "data/MCF7_x5_cropped/slide_14.png", "annotation": null}
+    ],
+
+    "test_slides": [
+        {"image": "data/MCF7_x5_cropped/slide_15.png"},
+        {"image": "data/MCF7_x5_cropped/slide_16.png"}
+    ],
+
+    "output_dir": "results/atlas_v2",
+
+    "model": "phikon",
+    "patch_size": 112,
+    "stride": 96,
+
+    "stain_normalization_method": "macenko",
+    "stain_reference_image": "data/MCF7_x5_cropped/slide_01.png",
+
+    "clustering_method": "leiden",
+    "leiden_neighbors": 15,
+    "leiden_resolution": 1.0,
+    "hdbscan_min_cluster": 50,
+    "hdbscan_min_samples": 10,
+    "pca_variance": 0.95,
+
+    "root_cluster": "auto",
+    "n_diffmap_comps": 10,
+    "dpt_neighbors": 30,
+
+    "n_permutations": 1000,
+    "use_stardist": false,
+
+    "annotation_format": "geojson",
+    "annotation_coordinate_space": "pixel",
+    "label_order": {},
+
+    "ignore_right_half": false,
+    "sat_thresh": 15,
+    "val_thresh": 230,
+    "white_thresh": 220,
+    "white_frac": 0.70
+}

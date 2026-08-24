@@ -71,6 +71,36 @@ Sixteen H&E whole-slide images of MCF7 breast-cancer xenografts. Four mice
 (6027 / 6028 / 6029 / 6031), two flanks each (4L / 4R), two serial sections each
 (2M-1 / 2M-2).
 
+> **THEY ARE 8 MATCHED PAIRS.** Added 2026-08-23, and it was missed for a year. Every
+> mouse-flank combination (a *gland*) contributes exactly one slide to each section:
+> 6027/6028/6029/6031 x 4L/4R. The 16 slides are therefore **8 matched pairs, not 16
+> independent samples**, verified from the per-duct tables by
+> `analysis/gland_pairing_audit.py`.
+>
+> **Nothing in the pipeline knows this.** Slides are treated as independent throughout, which
+> is correct for extraction and embedding but means any downstream statistical test has to
+> supply the pairing itself. Two consequences are live: the between-section comparison was
+> mis-specified (now corrected, `analysis/holeyness_paired_comparison.py`) and the full-atlas
+> 16-slide LOO **leaks** — holding out one slide leaves its gland partner in training. The
+> within-section bootstraps are unaffected, because within one section no two slides share a
+> gland. See `docs/KNOWN_ISSUES.md` sections 1.1-1.3.
+>
+> **It also enabled the cohort's strongest measurement.** Matched tissue across two fixations
+> gives a within-gland fixation effect, free of every between-animal source of variation:
+> PFA ducts are **1.64x larger in area** and carry **5.48x more hole area** than Carnoy's,
+> 8/8 glands, exact sign-test p = 0.0078. The lumen collapses far harder than the duct
+> (anisotropy 0.261, 8/8 glands, p = 0.0078). **Treat that as a result, not a caveat** — it
+> is a quantitative measurement of what Carnoy's does to ductal architecture, made against a
+> within-animal control, and it is the most concrete thing this project has produced.
+>
+> It does follow that **`hole_pct` is not fixation-invariant**: numerator and denominator
+> shrink by different factors, so the quantity means something different in each section.
+> Within-section validation is unaffected. The cross-section replication (0.276 and 0.191, no
+> evidence they differ) still holds, because Spearman ignores monotone rescaling — but state
+> it as *the correlation replicates despite `hole_pct` being systematically rescaled between
+> conditions*, which arguably strengthens it. Full account in
+> `docs/ANCHOR_VALIDATION_RECORD.md` section 3.12.
+
 The hypothesis: **tumour morphology varies along a continuum, and that continuum can be
 recovered without labels.** The pipeline cuts each slide into small patches, embeds them
 with a pathology foundation model, builds a manifold, and fits a *pseudotime* — a

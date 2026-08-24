@@ -194,6 +194,11 @@ def partial_spearman(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> float:
 
     All inputs are raw values (not pre-ranked); spearmanr is applied internally.
     Returns nan if the denominator collapses (perfect collinearity).
+
+    Duplicate of holeyness._partial_spearman, same formula, verified to agree at
+    1.04e-13 worst case. Left in place so this module stays importable without
+    pulling in the holeyness duct machinery. See that function's docstring for why
+    the four implementations were not consolidated.
     """
     valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
     if valid.sum() < 10:
