@@ -15,6 +15,17 @@ out to still be needed, move it back rather than copying it.
 
 ## Contents
 
+### `reports/codebase_inventory_2026-08-12.md` — preserved 2026-08-22, Phase 0
+
+The previous Phase 0 inventory, dated 2026-08-12 and covering 64 real modules. Preserved
+verbatim before `reports/codebase_inventory.md` was replaced with the 2026-08-22 version,
+which covers 82 real modules and corrects several premises that had gone stale.
+
+**Why preserved rather than overwritten:** it is the provenance record for the archival
+decisions documented below — those entries cite phase numbers from that pass, not from
+the current one. Nothing reads it; it is kept so the earlier reasoning stays inspectable.
+
+
 ### `jobs/submit_annotation_check.sh` — archived 2026-08-12, Phase 1
 
 Two-step SLURM script: convert QuPath GeoJSON annotations to ratio coordinates, then

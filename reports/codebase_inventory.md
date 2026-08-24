@@ -1,447 +1,380 @@
 # Codebase Inventory — Phase 0
 
-**Date:** 2026-08-12
-**Repo state:** `main` @ `c0562d1`, working tree clean at time of inventory.
-**Scope:** read-only. No source file was created, modified, moved, or archived.
+**Date:** 2026-08-22
+**Scope:** read-only analysis. No source file was created, modified, moved, or archived
+by this phase. The one file operation performed was preserving the previous inventory
+(see §0).
+**Authority rule:** the code is authoritative. Where any prior document disagrees with
+what the code does, the discrepancy is reported in §6 rather than silently resolved.
+
+---
+
+## 0. Read this first — a prior cleanup already ran
+
+This is not a clean-slate inventory. A multi-phase cleanup executed on **2026-08-12** and
+left durable artifacts in the tree. Several premises in the current brief are already
+resolved, and re-doing that work would be wasted effort.
+
+| Prior artifact | State |
+|---|---|
+| `reports/codebase_inventory.md` | Existed, dated 2026-08-12, covering 64 real modules. **Superseded by this document**; the original is preserved verbatim at `archive/reports/codebase_inventory_2026-08-12.md`. |
+| `archive/` + `archive/README.md` | Exists. 10 files archived across that pass's Phases 1, 5 and 7, each with a written rationale. |
+| `docs/PIPELINE_HANDOFF.md` | Exists, 79 KB, 12 parts. **This is substantially the Phase 1 deliverable already** — see §7. |
+| `docs/ANCHOR_VALIDATION_RECORD.md` | Exists, written 2026-08-21. Covers the analysis-branch experiments, an error log, an untrusted-statistics list, parameter provenance and a roadmap. Overlaps Phase 2's scope. |
+
+Note the prior pass used **different phase numbers** from this brief. Its Phase 5 was
+diffusion (this brief's Phase 7); its Phase 7 was job scripts (this brief's Phase 10).
+When reading `archive/README.md`, treat its phase numbers as belonging to that pass.
+
+**Premises in the current brief that are already false or already fixed:**
+
+1. *"`run_train_test.py` is documented as importing a non-existent `config.py`; confirm
+   and find others."* — **The file does not exist.** It is absent from the working tree
+   and was deleted before the 2026-08-12 pass began. `config.py` has never existed. The
+   claim survives only in `PROJECT_STATE.md`, which is stale on this point. Phase 10's
+   instruction to archive it cannot be carried out. Its orphaned companions
+   `train_test_config.json` and `example_config.json` remain in the tree and are read by
+   nothing (§4.3).
+2. *"`paths.json` `annotations` points at `data/annotations` while job scripts use
+   `data/annotations_ratio`."* — **Already fixed.** `paths.json` now reads
+   `"annotations": "~/cancer_trajectory_atlas/data/annotations_ratio"`.
+3. *"`paths.json` `stain_reference` is unread."* — **The key no longer exists.**
+   `paths.json` has exactly four keys: `raw_ndpi`, `cropped_png`, `annotations`,
+   `results`. All four are read by `run_all._load_default_paths()` (`run_all.py:29`).
+4. *"Archive the dead mask-loading code in `validation/annotations.py`."* (Phase 8) —
+   **`validation/annotations.py` does not exist.** `validation/` contains only
+   `__init__.py`, `correlations.py` and `morphological_features.py`. `validation/__init__.py:17`
+   records that its consumer was `run_train_test.py`, "itself since removed."
+
+**Consequence for the plan:** Phase 3 is largely a no-op, Phase 8's archival target is
+gone, and Phase 10's archival target is gone. I recommend confirming how you want those
+phases scoped before we reach them.
 
 ---
 
 ## 1. Method
 
-Reachability was computed mechanically, not by eye:
+Reachability was computed mechanically, not by eye.
 
-1. Every `*.py` outside `.git/` and `__pycache__/` was parsed with `ast` and its
-   internal imports resolved (relative imports resolved against the module's own
-   package; absolute `cancer_trajectory_atlas.X` imports normalised to `X`).
-   Imports inside function bodies were captured, which matters because
-   `run_all.run_pipeline()` does all of its pipeline imports lazily.
-2. Entry points ("seeds") were extracted from `jobs/*.sh` by scanning for both
-   `python -m cancer_trajectory_atlas.<mod>` and `python <path>/cancer_trajectory_atlas/<path>.py`,
-   distinguishing live lines from commented-out ones.
-3. The transitive closure of imports was taken from `run_all` and from the job seeds
-   separately, so "reachable from `run_all`" and "reachable only from a job script"
-   can be told apart.
+1. Every `*.py` outside `.git/`, `__pycache__/` and `archive/` was parsed with `ast` and
+   its internal imports resolved (relative imports against the module's own package;
+   absolute `cancer_trajectory_atlas.X` imports normalised to `X`). Imports **inside
+   function bodies** were captured — this matters, because `run_all.run_pipeline()` does
+   all of its pipeline imports lazily.
+2. Entry points were extracted from `jobs/*.sh`, distinguishing live lines from
+   commented-out ones. An initial regex missed invocations of the form
+   `python "$REPO/converters/batch_convert.py"`; those were found by a second sweep and
+   folded in. **Two modules were misclassified as unreachable until that second sweep** —
+   worth knowing if this analysis is ever repeated.
+3. Transitive closures were taken separately from `run_all`, from `run_individual`, and
+   from the job seeds, so the classes can be told apart.
 
-**Totals:** 75 `.py` files — 11 of which are package `__init__.py` (all empty or a
-single line; none re-export anything), leaving **64 real modules**.
+**Totals:** 92 `.py` files. 10 are package `__init__.py` (all empty or a single
+docstring; none re-export anything), leaving **82 real modules** including the two entry
+points. Up from 64 at the 2026-08-12 inventory — the growth is entirely in
+`analysis/`, from the anchor-validation work.
 
 ---
 
 ## 2. Reachability map
 
-### 2.1 Class A — reachable from `run_all.py` (16 entries, incl. 2 package inits)
+### 2.1 Class A — reachable from `run_all.py` (18 modules)
 
-These are the pipeline proper. Everything here executes on the `--run` path unless noted.
+The pipeline proper.
 
-| Module | Role | Note |
-|---|---|---|
-| `run_all.py` | entry point | `--convert` and `--run` |
-| `pipeline_config.py` | `PipelineConfig` dataclass | module-level import |
-| `data/slide_registry.py` | `KNOWN_NDPI_DIMENSIONS` fallback table | module-level import; used by `_get_known_dimensions` |
-| `data/stain_normalization.py` | `build_normalizer`, `normalize_slide` | |
-| `features/patching.py` | `get_patches_from_array`, `load_roi_polygons`, `sample_patches` | |
-| `features/extractors.py` | `extract_features`, `load_model_components`, `extract_features_from_model` | latter two only on the cache-miss path |
-| `analysis/clustering.py` | `fit_pca`, `run_umap`, `cluster`, `check_slide_independence`, `get_cluster_centroids` | |
-| `analysis/harmony.py` | `apply_harmony` | imported only when `effective_batch_method == "harmony"` |
-| `analysis/scvi_integration.py` | `apply_scvi` | imported only when `effective_batch_method == "scvi"` |
-| `analysis/diffusion.py` | `build_adata`, `compute_diffusion_map`, `compute_dpt_multi_root`, `compute_paga_topology` | see §2.5 for dead functions inside it |
-| `analysis/projector.py` | `AtlasProjector` | saved at end of every run |
-| `validation/morphological_features.py` | `compute_morphological_features`, `compute_nuclear_density_quick` | |
-| `validation/correlations.py` | `run_full_validation` | |
-| `utils/io.py` | `save_json`, `save_pickle` | |
-| `utils/viz.py` | all figure writers | |
-| `utils/__init__.py` | package init | |
-
-`--convert`-only dependencies: none internal. `convert_ndpi_to_left_half_png()` uses
-only `openslide` + `PIL`, plus `PipelineConfig`.
-
-### 2.2 Class B — reachable only from a job script (30 seeds + 5 transitive)
-
-Seeds invoked directly by `jobs/*.sh`:
-
-| Seed module | Invoked by |
+| Module | Role |
 |---|---|
-| `run_individual.py` | `run_individual_pseudotime.sh`, `run_new_annotations.sh` |
-| `analysis/loo_project.py` | `run_full_experiments.sh`, `run_loo_single.sh`, `run_loo_single_scvi.sh`, `run_paga_variant.sh`, `run_per_section.sh`, `run_smoke_test.sh` |
-| `analysis/loo_summary.py` | `run_paga_variant.sh`, `run_per_section.sh` |
-| `analysis/cross_section_compare.py` | `run_per_section.sh` |
-| `analysis/run_batch_mixing.py` → `analysis/batch_mixing.py` | `run_batch_mixing.sh`, `run_per_section.sh` |
-| `analysis/plot_umap_by_section.py` | `run_umap_by_section.sh` (script path, not `-m`) |
-| `analysis/cellularity_confound.py` | `run_cellularity_confound.sh` |
-| `analysis/crop_calibration.py` | `run_crop_calibration.sh` |
-| `analysis/pseudotime_std_analysis.py` | `run_pseudotime_std_analysis.sh` |
-| `analysis/sign_flip_check.py` | `run_sign_flip_check.sh` |
-| `analysis/slide_diagnostics.py` | `run_slide_diagnostics.sh` |
-| `analysis/stage2_reference_threshold.py` | `run_stage2_reference_threshold.sh` |
-| `analysis/v2_comparison.py` | `run_v2_comparison.sh` |
-| `analysis/eccentricity_check.py` | `run_eccentricity_check.sh` |
-| `analysis/root_sensitivity.py` | `run_root_sensitivity.sh` |
-| `analysis/holeyness.py` | `run_holeyness_validation.sh`, `run_holeyness_validation_v2.sh` |
-| `analysis/holeyness_final.py` | `run_holeyness_final.sh` |
-| `analysis/holeyness_v3_significance.py` | `run_holeyness_v3_significance.sh` |
-| `analysis/holeyness_v3b_patch_count_check.py` | `run_holeyness_v3b_patch_count_check.sh` |
-| `analysis/timepoint_inventory.py` | `run_timepoint_stage1_convert.sh` |
-| `analysis/timepoint_cohort_inventory.py` | `run_timepoint_cohort_inventory.sh` |
-| `analysis/timepoint_cohort_inventory_v2.py` | `run_timepoint_cohort_inventory_v2.sh` |
-| `analysis/timepoint_convert_nocrop.py` | `run_timepoint_convert_nocrop.sh`, `run_timepoint_convert_stageC.sh` |
-| `analysis/timepoint_stage2_stain_check.py` | `run_timepoint_stage2_stain_check.sh` |
-| `analysis/timepoint_stain_homogeneity.py` | `run_timepoint_stain_homogeneity.sh` |
-| `analysis/timepoint_stain_homogeneity_v2.py` | `run_timepoint_stain_homogeneity_v2.sh` |
-| `analysis/timepoint_projection.py` | `run_timepoint_stageD_projection.sh` |
-| `analysis/timepoint_diagnostic.py` | `run_timepoint_stageE_diagnostic.sh` |
-| `analysis/timepoint_roi_mismatch.py` | `run_timepoint_stageF_roi_mismatch.sh` |
-| `diagnostics/audit_feature_diagnostics.py` | `run_feature_diagnostics.sh` |
-| `diagnostics/dpt_clamping_check.py` | `run_dpt_clamping_check.sh` |
-| `diagnostics/inspect_root_patches.py` | `run_inspect_root_patches.sh` |
-| `figures/make_paper_figures.py` | `run_paper_figures.sh` |
-| `qc/run_qc.py` → `qc/graph_connectivity.py`, `qc/stain_qc.py`, `qc/cluster_contact_sheet.py`, `qc/pseudotime_by_slide.py` | `submit_qc.sh` |
-| `visualize/interactive_overlay.py` | 8 job scripts |
-| `visualize/export_patches.py` | 8 job scripts |
-| `visualize/interactive_plotly.py` | `run_post_processing_scvi.sh` |
-| `visualize/scvi_postprocess.py` | `run_post_processing_scvi.sh` |
-| `jobs/check_annotations.py` | `submit_annotation_check.sh` (script path) |
+| `run_all.py` | entry point, `--convert` and `--run` |
+| `pipeline_config.py` | `PipelineConfig` dataclass |
+| `data/slide_registry.py` | `KNOWN_NDPI_DIMENSIONS` fallback table |
+| `data/stain_normalization.py` | stain normalisation (reinhard / macenko / none) |
+| `features/patching.py` | ROI polygons, patch extraction, tissue filters, sampling |
+| `features/extractors.py` | Phikon / ResNet50 embedding |
+| `analysis/clustering.py` | PCA, Leiden, UMAP, slide-independence check |
+| `analysis/harmony.py` | Harmony batch correction |
+| `analysis/scvi_integration.py` | scVI batch correction |
+| `analysis/diffusion.py` | diffusion map, PAGA, multi-root DPT |
+| `analysis/holeyness.py` | imported for duct loaders used by holeyness rooting |
+| `analysis/holeyness_roots.py` | `root_source="holeyness"` root selection |
+| `analysis/projector.py` | `AtlasProjector` |
+| `validation/morphological_features.py` | the six descriptors |
+| `validation/correlations.py` | validation suite |
+| `utils/io.py`, `utils/viz.py`, `utils/__init__.py` | JSON/pickle IO, figures |
 
-Note on `qc/run_qc.py`: it uses bare `from qc.X import …` rather than relative or
-package-qualified imports, but it prepends both the project root and its parent to
-`sys.path` at lines 33–36, so `python -m cancer_trajectory_atlas.qc.run_qc` resolves.
-Reachable and functional; not a broken import.
+`analysis/holeyness.py` and `analysis/holeyness_roots.py` are on this path **only** when
+`--root-source holeyness` is passed. The reference `per_section_v2` run does not pass it,
+so neither executed in that run, but both are imported.
 
-### 2.3 Class C — unreachable from any entry point (5 real modules)
+### 2.2 Class B — reachable only from a job script (54 modules)
 
-| Module | Compiles? | Internal imports resolve? | Any reference anywhere? |
+Invoked directly by one or more `jobs/*.sh`, never imported by `run_all`. This is the
+analysis and diagnostics estate: the `holeyness*` family (12 modules), the `timepoint*`
+family (10), the anchor-validation modules (`anchor_area_control`, `export_anchor_axis`,
+`eccentricity_*`, `holeyroot_*`, `duct_white_fraction`, `root_sensitivity`, …), plus
+`diagnostics/` (4), `qc/run_qc.py`, `figures/make_paper_figures.py` and `visualize/` (4).
+
+Two of these are reachable only via `$REPO`-path invocation inside
+`jobs/run_full_pipeline_handoff.sh`: `converters/batch_convert.py` (line 320) and
+`jobs/check_annotations.py` (line 399).
+
+### 2.3 Class C — reachable only via another module (5)
+
+Never invoked directly; imported by a Class B module.
+
+| Module | Imported by |
+|---|---|
+| `analysis/batch_mixing.py` | `analysis/run_batch_mixing.py` |
+| `qc/cluster_contact_sheet.py` | `qc/run_qc.py` |
+| `qc/graph_connectivity.py` | `qc/run_qc.py` |
+| `qc/pseudotime_by_slide.py` | `qc/run_qc.py` |
+| `qc/stain_qc.py` | `qc/run_qc.py` |
+
+### 2.4 Class D — unreachable (4)
+
+**All four import cleanly.** There are no broken imports anywhere in the tree — the
+condition the brief expected to find does not exist.
+
+| Module | Status |
+|---|---|
+| `analysis/loo_summary_scvi.py` | Imports OK. Referenced only in a **commented-out** line of `jobs/submit_loo_array_scvi.sh:30` and in its own docstring. |
+| `analysis/recover_loo.py` | Imports OK. Referenced only in its own docstring usage example. A recovery utility for interrupted LOO arrays. |
+| `converters/ndpi_to_img.py` | Imports OK. Standalone CLI; superseded on the pipeline path by `run_all.py --convert`, which does left-half cropping the converter does not. |
+| `converters/tiff_to_img.py` | Imports OK. Standalone CLI. No TIFF input exists in the current data. |
+
+These are archive candidates for Phase 10, but note `recover_loo.py` is an operational
+recovery tool — archiving it removes a rescue path for a long array job. Recommend
+keeping it and documenting rather than archiving. **No action taken in this phase.**
+
+---
+
+## 3. Parameter provenance
+
+Reference run = `per_section_v2` (`jobs/run_per_section_v2.sh:179-195`). The CLI it
+issues is reproduced verbatim in §3.3.
+
+**Legend for "Source":**
+**CLI** = explicitly passed by the reference job · **cfg-default** = `PipelineConfig`
+default, never overridden · **argparse-default** = `run_all.py` default, never overridden
+· **fn-default** = Python function default, never plumbed to the CLI · **lib-default** =
+third-party library default, never set by this codebase.
+
+### 3.1 Parameters the brief asked about
+
+| Parameter | Value in `pipeline_config.py` | Job override? | Value in `per_section_v2` | Source | Deliberate? |
+|---|---|---|---|---|---|
+| `patch_size` | 112 | yes, `--patch-size 112` | 112 | CLI | **deliberate** (matches config) |
+| `stride` | 96 | yes, `--stride 96` | 96 | CLI | **deliberate** |
+| `ndpi_scale` | 1.0 | n/a (`--convert` only) | 1.0 | cfg-default | conversion used `--ndpi-scale 1.0` explicitly (`jobs/convert_ndpi.sh:26`) |
+| `ndpi_level` | 0 | n/a (`--convert` only) | 0 | cfg-default | `jobs/convert_ndpi.sh:25` passes 0 explicitly |
+| magnification | — | — | — | — | **Not a pipeline parameter.** "x5" appears only in the *directory name* `MCF7_x5_cropped`. Conversion reads NDPI level 0 at scale 1.0; no downsampling is applied by this code. |
+| `white_thresh` | not in config | no | 220 | **fn-default** (`features/patching.py:21,230`) | **DEFAULT, not a choice** |
+| `white_frac` | not in config | no | 0.70 | **fn-default** (`patching.py:22,231`) | **DEFAULT, not a choice** |
+| `sat_thresh` (saturation) | not in config | no | 15 | **fn-default** (`patching.py:29,227`) | **DEFAULT, not a choice** |
+| `val_thresh` (value) | not in config | no | 230 | **fn-default** (`patching.py:30,228`) | **DEFAULT, not a choice** |
+| `tissue_threshold` (fraction) | not in config | no | 0.5 | **fn-default** (`patching.py:31,229`) | **DEFAULT, not a choice** |
+| PCA variance target | not in config | no | 0.95 | **fn-default**, hardcoded at the one call site (`run_all.py:508`) | **DEFAULT, not a choice** |
+| Leiden k | not in config | no | 15 | **fn-default** (`clustering.py:179`) | **DEFAULT, not a choice** — not plumbed to CLI |
+| Leiden metric | not in config | no | cosine | **fn-default** (`clustering.py:181`) | **DEFAULT, not a choice** |
+| `leiden_resolution` | 0.5 | yes, `--leiden-resolution 0.5` | 0.5 | CLI | **deliberate.** Function default is 1.0 and is never used. |
+| diffmap k | `diffmap_neighbors = 30` | **no** | 30 | argparse/cfg-default | value chosen in config, but **not passed by the reference job** |
+| diffmap metric | not in config | no | euclidean | **lib-default** (scanpy) | **DEFAULT, not a choice.** `sc.pp.neighbors` is called with no `metric=` (`diffusion.py:82`). No CLI flag exists. |
+| diffmap `n_comps` | `diffmap_comps = 10` | no | 10 | argparse/cfg-default | |
+| `n_roots` | 20 | yes, `--n-roots 20` | 20 | CLI | **deliberate** |
+| `cap_strategy` | `"median"` | yes, `--cap-strategy median` | median | CLI | **deliberate** |
+| `stain_method` | `"reinhard"` | yes, `--stain-method none` | **none** | CLI | **deliberate override of the config default** |
+| harmony `nclust` | not in config | no | n/a — Harmony not run | **fn-default** 10 (`harmony.py:51`) | inert in the reference run (`--batch-method none`) |
+
+### 3.2 Additional parameters worth recording
+
+| Parameter | Config | Reference run | Note |
 |---|---|---|---|
-| `converters/batch_convert.py` | yes | none (stdlib only) | `PROJECT_STATE.md` only |
-| `converters/ndpi_to_img.py` | yes | none | `PROJECT_STATE.md`, `README.md` only |
-| `converters/tiff_to_img.py` | yes | none | `PROJECT_STATE.md`, `README.md` only |
-| `analysis/recover_loo.py` | yes | yes (`analysis.projector`, `analysis.clustering`, both exist) | `PROJECT_STATE.md` only |
-| `analysis/loo_summary_scvi.py` | yes | yes (`utils.io.save_json`, `validation.correlations.correlate_features_with_pseudotime`, both exist) | referenced only in a **commented-out** line of `jobs/submit_loo_array_scvi.sh:30` |
+| `model` | `phikon` | `--model phikon` | deliberate |
+| `n_permutations` | 1000 | `--n-permutations 1000` | deliberate |
+| `max_patches_per_slide` | 200 | not passed → 200 | **inert**: `cap_strategy="median"` ignores it |
+| `target_total` | 3200 | not passed | **informational only**; config comment states it is "logged; never used in sampling logic" |
+| `patch_sample_seed` | 42 | not passed → 42 | argparse-default |
+| `min_roi_coverage` | `None` | not passed → `None` | centre-point check only |
+| `use_stardist` | `False` | not passed | Otsu segmentation used |
+| `batch_method` | `None` | `--batch-method none` | deliberate |
+| `root_source` | `"cellularity"` | not passed | density rooting |
+| `root_cluster`, `root_metric` | `None`, `"cellularity"` | not passed | **vestigial no-ops**, already documented as such in `pipeline_config.py` |
+| UMAP k / metric / min_dist | — | 30 / cosine / 0.1 | fn-defaults; **display only**, nothing downstream reads the embedding |
 
-**No unreachable module fails to import.** Every one of the five compiles cleanly and
-every internal import it makes resolves to an existing symbol. There is no equivalent
-of the "imports a non-existent `config.py`" failure described in the brief — see §4.
-
-The 11 `__init__.py` files also show as unreachable in the graph because nothing
-imports the packages by bare name; they are structural and must stay.
-
-### 2.4 `converters/batch_convert.py` is not really dead — it is a manual tool
-
-It reads `./data/annotations/*.geojson` + `./converters/img_dims.txt` and writes
-`./data/annotations_ratio/*.json`, i.e. it is the **producer** of the ratio annotations
-the pipeline consumes. It uses hardcoded relative paths, so it must be run from the
-repo root as a plain script, which is why it never appears in `jobs/`. Archiving it
-would remove the only in-repo record of how `data/annotations_ratio/` was generated.
-
-**Maintainer confirms this script is correct and works as intended.** Keep in place;
-the only gap is that nothing in the repo says it must be run from the repo root, and
-`jobs/submit_annotation_check.sh` calls a differently-named module for the same job
-(§3.1). Both are documentation-level items for Phase 1.
-
-### 2.5 Dead code *inside* reachable modules
-
-- `analysis/diffusion.py:run_diffusion_pseudotime()` — **zero callers** anywhere in the
-  repo (`.py`, `.sh`, `.md`). Fully dead.
-- `analysis/diffusion.py:compute_dpt()` and `choose_root_cell()` — **not** dead, but not
-  on the `run_all` path either. Their only caller is `run_individual.py:296` /
-  `:220`. Any Phase 5 change to them changes `run_individual`, not the atlas pipeline.
-
----
-
-## 3. Broken references found
-
-### 3.1 `jobs/submit_annotation_check.sh:37` invokes a module that does not exist
+### 3.3 The reference invocation, verbatim
 
 ```
-python -m cancer_trajectory_atlas.converters.geojson_to_ratio_json …
+python -m cancer_trajectory_atlas.run_all --run \
+  --png-dir "$PNG_DIR" --annotation-dir "$ANN_DIR" --output-dir "$OUT_DIR" \
+  --stain-method none --batch-method none --model phikon \
+  --patch-size 112 --stride 96 \
+  --clustering-method leiden --leiden-resolution 0.5 \
+  --n-roots 20 --n-permutations 1000 \
+  --features-cache-dir "$CACHE_DIR" --cap-strategy median --slides "$SLIDES_CSV"
 ```
 
-`converters/geojson_to_ratio_json.py` is not in the repo and is not in git history under
-that name. The functionality lives in `converters/batch_convert.py` (§2.4), but with a
-different CLI (no arguments — hardcoded relative paths), so the call site cannot simply
-be renamed. `NOTES.md:195` repeats the same wrong filename.
+`ANN_DIR="$HOME/cancer_trajectory_atlas/data/annotations_ratio"` (line 82).
 
-**This script is broken as written and will exit non-zero at that line.** Reported, not
-touched — repairing it is a Phase 1 decision.
+### 3.4 Summary — what was a default rather than a choice
 
-### 3.2 Stale directory listings in docs
+**Eleven** operative values were never deliberately chosen. Reporting only what the code
+shows, with no inference about intent:
 
-`PROJECT_STATE.md:132` still lists `jobs/recover_loo_phase_b.py`, which no longer
-exists (moved to `analysis/recover_loo.py` in `0fa4880`). `PROJECT_STATE.md` itself
-notes this as resolved at line 439, so the tree diagram at line 132 simply was not
-updated. Cosmetic; noted for whoever documents this pass.
+- Five tissue-filter thresholds (`white_thresh` 220, `white_frac` 0.70, `sat_thresh` 15,
+  `val_thresh` 230, `tissue_threshold` 0.5) — function defaults, not in config, not on
+  the CLI.
+- PCA variance target 0.95 — hardcoded at its single call site.
+- Leiden k=15 and metric=cosine — function defaults, not plumbed to the CLI.
+- Diffusion-map metric=euclidean — **scanpy's** default; the call passes no `metric`.
+- UMAP k=30, metric=cosine, min_dist=0.1 — function defaults (display only).
+- Harmony `nclust`=10 — function default (inert in the reference run).
 
----
-
-## 4. Premises in the brief that no longer hold
-
-Four items the brief instructs later phases to act on have **already been done**, in
-commit `0fa4880` ("refactor/deleted unused files, added smoke test") and `d265574`.
-Flagging them now so Phases 1, 2, 6 and 7 can be re-scoped rather than executed blind.
-
-| Brief says | Actual state |
-|---|---|
-| Phase 0/6/7: `run_train_test.py` exists and imports a non-existent `config.py` | **File does not exist.** It is gitignored (`.gitignore:12`) and absent from the working tree. `config.py` has never existed. Its companions `train_test_config.json` and `example_config.json` are still present but untracked and read by nothing. |
-| Phase 6/7: `validation/annotations.py` contains legacy mask-loading code | **File does not exist.** Deleted in `0fa4880` (231 lines removed). `validation/` now holds only `correlations.py` and `morphological_features.py`. `features/patching.py:load_roi_polygons` is already the sole annotation path. |
-| Phase 1: `paths.json` `"annotations"` points at `data/annotations`, and has an unused `"stain_reference"` key | **Neither is true.** `paths.json` has exactly four keys and `"annotations"` already reads `~/cancer_trajectory_atlas/data/annotations_ratio`. There is no `"stain_reference"` key. (`stain_reference.png` is written *into the output dir* by `run_all.py:286`, which is unrelated.) |
-| Phase 2: add the coordinate-system docblock to `load_roi_polygons()` | **Already present**, `features/patching.py:59–95`, and it documents exactly the three spaces and the `ratio × original_full_width` invariant the brief describes. |
-| Phase 7: `run_individual.py` uses module-level globals | **No longer true.** It was rewritten in `0fa4880` (253 lines changed) and now uses its own `IndividualConfig` dataclass (`run_individual.py:40–52`) plus a `_load_default_paths()` reading `paths.json`. It does *not* use `PipelineConfig` — that is a real inconsistency, but a different one than described. |
-
-What *is* live from the brief: the dead `--root-cluster` / `--root-metric` flags
-(Phase 5, confirmed below), the cache shape contract (Phase 3, confirmed enforced),
-the two-kNN-graph documentation gap (Phase 4), and job-script supersession (Phase 7).
+The diffusion-map **k=30** is a middle case: chosen in `PipelineConfig` and exposed as
+`--diffmap-neighbors`, but not passed by the reference job, so the config default is what
+ran. It is the one parameter here with an external benchmark — see
+`docs/ANCHOR_VALIDATION_RECORD.md` §6 on the k≥50 plateau.
 
 ---
 
-## 5. Annotation directories — both are legitimate
+## 4. Output artifacts
 
-Not a discrepancy to fix. There is a producer/consumer relationship:
+### 4.1 Written by `run_all.py --run`, per run directory
 
-| Directory | Contents | Role |
+| Artifact | Line | Consumed by |
 |---|---|---|
-| `data/annotations/` | 16 `.geojson`, QuPath export, **absolute pixel coords** | source of truth from the annotator |
-| `data/annotations_ratio/` | 16 `.json`, **ratio coords in [0,1]** | derived by `converters/batch_convert.py`; what the pipeline consumes |
-| `data/old_annotations/` | 16 `.json` | superseded ratio annotations, predates the current set |
-| `data/annot_check_test/` | `.png` overlays | output of `jobs/check_annotations.py` |
-| `annotations_ratio/` (repo root) | **empty** | stray empty directory, untracked (git does not track empty dirs) |
+| `results.csv` | 730 | **74 files.** The most-read artifact in the repo. |
+| `adata_full.h5ad` | 716 | 39 files |
+| `validation.json` | 744 | 20 files |
+| `projector/` | 764 | 13 files (LOO) |
+| `holeyness_roots.json` | 628 | 11 files (only written when `--root-source holeyness`) |
+| `feature_failures.json` | 678 | 9 files |
+| `scaler.pkl`, `pca.pkl` | 747-748 | 5 files each |
+| `umap_reducer.pkl` | 749 | 3 files |
+| `active_cap.txt` | 446 | 3 files |
+| `figures/` | 251 | figure consumers |
+| `scvi/` | 752 | only when scVI is the batch method |
+| `sampling/*.npy` | 738-742 | written only when sampling occurred |
 
-**`data/annotations_ratio/` is authoritative for the pipeline** and `paths.json` already
-says so. Nine job scripts still point `--annotation-dir` at `data/annotations`:
+### 4.2 Orphaned artifacts — nothing reads them
 
-- `run_all_none.sh`, `run_all_macenko.sh`, `run_all_reinhard.sh`, `run_all_none_section.sh`
-- `submit_harmony.sh`, `submit_harmony_macenko.sh`, `submit_harmony_none.sh`
-- `run_individual_pseudotime.sh`
-- `run_timepoint_stage1_convert.sh` (`ANNOTATION_DIR`)
-
-### 5.1 Those scripts were correct when they ran — the directory changed under them
-
-Confirmed from git history, and matches the maintainer's account:
-
-| Commit | `data/annotations/` contained |
-|---|---|
-| `4e29a80` (initial release) | 16 **`.json`** — ratio coordinates |
-| `f050e4a` ("new annotations") | 16 `.json` **deleted**, 16 **`.geojson`** added |
-| `4f66418` ("new annotations added") | GeoJSONs updated in place |
-
-So `data/annotations` was the ratio-annotation directory for the whole early period.
-The ratio files later moved to `data/annotations_ratio/` and `data/annotations/` was
-repurposed as the QuPath GeoJSON source. **The nine scripts above were not wrong at the
-time they were submitted; results produced by them are not retroactively suspect.**
-
-What is true is that they are **stale today**: re-running any of them as written would
-feed absolute-pixel GeoJSON to a loader that is always called with
-`coordinate_space="ratio"` (`run_all.py:334`), and `discover_slides()`
-(`run_all.py:183–188`) matches `*.geojson` happily. Every polygon coordinate would be
-multiplied by `original_full_width` a second time and land far off-canvas, yielding few
-or no in-ROI patches.
-
-This makes them archive candidates on grounds of supersession (Phase 7), not repair
-candidates. Nothing changed here.
-
-### 5.2 One live case: `run_slide_diagnostics.sh` — confirmed hazard
-
-`run_slide_diagnostics.sh:26` sets `ANN_DIR=$SCRATCH/data/annotations`, which the
-maintainer confirms **contains GeoJSON**. This one does not go through
-`load_roi_polygons`; `analysis/slide_diagnostics.py:98` reads the raw JSON itself and
-shoelace-integrates each polygon into a field it names `total_area_ratio` (line 113),
-used by the H5 check (`investigate_annotations`, line 399).
-
-Fed GeoJSON, that number is in **pixel², not ratio²**, and the H5 check compares it
-across slides with a ±2σ z-score (line 424). Slide areas in `KNOWN_NDPI_DIMENSIONS`
-span 2.50e9 px² (`6029-4R-2M-1`) to 4.73e9 px² (`6028-4L-2M-1`) — a **1.9× spread**. Two
-slides with identical *fractional* annotated area therefore differ by up to 1.9× in the
-quantity H5 actually compares. The `n_polygons` half of H5 is coordinate-independent and
-unaffected.
-
-Practical consequence: the `total_area` arm of H5 is confounded by slide size. The LOO
-target `6028-4L-2M-2` (3.53e9 px², mid-range) is unlikely to have been *spuriously*
-flagged, but a real area anomaly could equally have been masked. **The recorded H5
-verdict from the existing `slide_diagnostics` run should be re-read on Narval before
-being cited.** I could not check it from here — no `slide_diagnostics` output exists in
-the local tree.
-
-Not changed. Fixing it means either pointing `ANN_DIR` at ratio JSON or normalising by
-`original_full_width × original_full_height` inside `load_annotations` — both change
-H5's output, so both are your call, not a behaviour-preserving cleanup.
-
----
-
-## 6. Parameter provenance: `pipeline_config.py` vs. what `jobs/*.sh` actually passes
-
-### 6.1 First, a structural point
-
-`PipelineConfig`'s field defaults are **not** what a `run_all` invocation uses. `run_all.py`
-constructs `PipelineConfig(...)` at line 865 passing *every* field explicitly from `argparse`,
-so the **argparse defaults are the operative defaults** for the pipeline. The dataclass
-defaults only bind for callers that construct `PipelineConfig` directly — and there are
-none: `run_individual.py` uses its own `IndividualConfig`.
-
-I compared all 24 overlapping fields. **Today the two sets of defaults agree exactly** —
-no divergence. That is worth stating in Methods, because it is not structurally
-guaranteed; it is currently true by coincidence of maintenance.
-
-### 6.2 Override matrix
-
-"Default" below means the argparse default in `run_all.py`.
-
-| Parameter | Default | Overridden by a job script? |
+| Artifact | Line | Assessment |
 |---|---|---|
-| `--model` | `phikon` | Passed explicitly by every run script, always as `phikon`. Never actually differs. |
-| `--patch-size` | `112` | Same — always passed, always `112`. |
-| `--stride` | `96` | Same — always passed, always `96`. |
-| `--clustering-method` | `leiden` | Same — always passed, always `leiden`. |
-| `--leiden-resolution` | `0.5` | Effectively always `0.5`. Only `run_smoke_test.sh` differs (`0.3`); `run_per_section*.sh` pass `$LEIDEN_RES` which is set to `0.5`. |
-| `--stain-method` | `reinhard` | **Genuinely varies**: `none` (per-section, LOO, scVI, cache), `macenko`, `reinhard`. The default is *not* what the reference runs use. |
-| `--n-permutations` | `1000` | `1000` for full runs, `200` for LOO folds, `10` for smoke. |
-| `--n-roots` | `20` | Passed as `20` by per-section / paga / full-experiments / cache-prepop / LOO-scVI. Everything else takes the default, also `20`. |
-| `--cap-strategy` | `median` | Passed as `median` by per-section, paga, full-experiments, cache-prepop; `fixed` by smoke. **Not passed at all** by `run_all_none/macenko/reinhard/none_section`, `submit_harmony*`, `run_all_capped`, `run_cache_population`, `run_loo_single*`, `run_new_annotations`, `run_scvi` — those silently get `median`. |
-| `--fixed-cap` / `--max-patches-per-slide` | `200` | Passed by `run_all_capped.sh` (`$MAX_PATCHES`, default 1900) and `run_smoke_test.sh` (50). **Inert everywhere else** — only read when `cap_strategy == "fixed"`. |
-| `--patch-sample-seed` | `42` | Passed by `run_all_capped.sh` (42), `run_loo_single*.sh` (`${SAMPLE_SEED:-42}`). Always resolves to 42 in practice. |
-| `--harmony` / `--harmony-key` | off / `section_number` | `--harmony` set by `run_all_capped`, `run_cache_population`, `run_cache_prepop`, `run_full_experiments`, `run_loo_single`, `run_new_annotations`, `run_smoke_test` (ref run only), `submit_harmony*`. Key always `section_number`. |
-| `--batch-method` | `None` (falls back to `--harmony`) | Only `run_per_section.sh` / `run_per_section_v2.sh` (`none`), `run_scvi.sh` / `run_loo_single_scvi.sh` (`scvi`). |
-| `--diffmap-neighbors` | `30` | Only `run_smoke_test.sh` (`10`). |
-| `--min-roi-coverage` | `None` | Only `run_new_annotations.sh` (`0.75`). |
-| `--features-cache-dir` | `None` | Set by 10 scripts, always `$SCRATCH/data/features_cache`. |
-| `--ndpi-level` / `--ndpi-scale` | `0` / `1.0` | Passed by `convert_ndpi.sh` (at the defaults) and `run_timepoint_stage1_convert.sh` (via vars). |
-| `--diffmap-comps` | `10` | **Never overridden by any script.** |
-| `--target-total` | `3200` | **Never overridden.** Informational only — logged at `run_all.py:463`, never used in sampling. |
-| `--use-stardist` | off | **Never overridden.** StarDist has never been enabled by any job script. |
-| `--scvi-n-latent/-layers/-hidden/-max-epochs` | `30`/`2`/`128`/`400` | **Never overridden**, including by `run_scvi.sh`. |
-| `--root-cluster` | `None` | **Never overridden — and never read.** See §6.4. |
-| `--root-metric` | `cellularity` | **Never overridden — and never read.** See §6.4. |
+| `sampling_manifest.csv` | 735 | **Zero consumers.** Provenance record of the per-slide cap. Recommend keeping — it documents which patches were sampled, which is not recoverable otherwise — but it is genuinely unread. |
+| `slide_independence.json` | 758 | **Zero consumers.** The cluster/slide-dominance check. Its *console output* is read by humans; the JSON is not read by code. |
 
-### 6.3 Three divergences between documented and actual behaviour
+Both are diagnostics whose value is archival rather than programmatic. **No action
+proposed** — deleting a provenance record to satisfy a "nothing reads it" criterion would
+be a net loss.
 
-These feed straight into Methods and all three are documentation bugs, not code bugs.
-I have not changed them.
+### 4.3 Orphaned config files at repo root
 
-1. **`pipeline_config.py:64` says `'fixed'` is the default cap strategy.** Line 71 sets
-   `cap_strategy: str = "median"`. The `(default)` annotation is attached to the wrong
-   option. The pipeline has been capping at the cohort median.
-
-2. **`pipeline_config.py:66` says `'none'` means "use `max_patches_per_slide` if set
-   (backward compat), else no cap".** `run_all.py:413–415` sets `active_cap = None`
-   unconditionally for `'none'`; `max_patches_per_slide` is ignored entirely. The
-   backward-compat behaviour described does not exist.
-
-3. **`jobs/run_all_capped.sh` does not do what its name says.** It passes
-   `--max-patches-per-slide "$MAX_PATCHES"` (default 1900) but never passes
-   `--cap-strategy fixed`, so `cap_strategy` defaults to `median` and `MAX_PATCHES` is
-   dead. Any result produced by that script is median-capped, not capped at 1900. If
-   anything in the writeup cites a 1900-patch cap, it is wrong.
-
-### 6.4 Confirmed: `--root-cluster` and `--root-metric` are dead on the `run_all` path
-
-`run_all.py:896,898` store them on `PipelineConfig`. Grepping every read of
-`cfg.root_cluster` / `cfg.root_metric`: **there are none** in `run_all.py` or in anything
-it calls. `compute_dpt_multi_root` takes `n_roots` and a precomputed nuclear-density
-vector; the root rule is hardcoded as `argsort(nuclear_density)[:n_roots]`
-(`analysis/diffusion.py:165`). The argparse help for `--root-cluster` already reads
-"Legacy arg; unused with multi-root DPT"; `--root-metric` has no such warning and its
-`choices=["cellularity"]` makes it look load-bearing when it is not.
-
-Caveat for Phase 5: `run_individual.py` has its own, **live** `--root-cluster` flag
-(`run_individual.py:285–296`) feeding `diffusion.compute_dpt`. Removing the dataclass
-fields must not touch `IndividualConfig.root_cluster`.
-
-### 6.5 Confirmed: the cache shape contract is intact
-
-`run_all.py:369–376` raises `RuntimeError` when `len(slide_feats) != orig_count`. There
-is exactly one cache-read site (`run_all.py:367`) and the check guards it directly, with
-no early-return or `try`/`except` around it. The check runs in Pass 1, before sampling,
-so it compares full uncapped counts on both sides — which is the correct comparison
-given the cache stores uncapped features (`run_all.py:361–362`). No path bypasses it.
-Full verification is Phase 3's job; this is a first-pass confirmation only.
-
-### 6.6 Confirmed: `dpt_root_candidates` persistence is intact
-
-`analysis/diffusion.py:195` writes `adata.uns["dpt_root_candidates"]` as `int64`.
-`analysis/v2_comparison.py:112` reads it back. Present in the current tree.
+`train_test_config.json` and `example_config.json` are read by nothing. They are
+leftovers from the deleted `run_train_test.py` workflow. Archive candidates for Phase 10.
 
 ---
 
-## 7. Reference configuration — what `per_section_v2` actually ran
+## 5. Duplicate and near-duplicate logic
 
-Resolved from `jobs/run_per_section_v2.sh` (vars at lines 77–83, invocation at 179):
+Identified only. **Nothing merged in this phase.**
 
-```
---run
---png-dir          $SCRATCH/data/MCF7_x5_cropped
---annotation-dir   $HOME/cancer_trajectory_atlas/data/annotations_ratio
---output-dir       $SCRATCH/results/per_section_v2/atlas_<SECTION>
---stain-method     none
---batch-method     none
---model            phikon
---patch-size       112
---stride           96
---clustering-method leiden
---leiden-resolution 0.5
---n-roots          20
---n-permutations   1000
---features-cache-dir $SCRATCH/data/features_cache
---cap-strategy     median
---slides           <per-section CSV>
-```
+### 5.1 Partial Spearman — four implementations, numerically identical
 
-Everything not listed takes the argparse default — notably `diffmap-neighbors=30`,
-`diffmap-comps=10`, `patch-sample-seed=42`, `min-roi-coverage=None`, `use-stardist=off`,
-`target-total=3200`. This is the exact flag set Phase 8's regression script must
-reproduce.
+| Implementation | Method |
+|---|---|
+| `analysis/holeyness.py:384` `_partial_spearman` | algebraic three-correlation formula |
+| `analysis/cellularity_confound.py:188` `partial_spearman` | algebraic (docstring claims parity with the above) |
+| `analysis/holeyness.py:481` `_partial_spearman_multi` | rank-transform → OLS residualise → Pearson |
+| `analysis/holeyness_v3_significance.py:89` `_partial_rho` | dispatches to the two above |
 
----
+**Verified numerically** on n=500 with a common confounder: all four agree to
+**3.1e-17**. Repeated with heavy ties (values rounded to 1 dp): still agree to
+**7.6e-17**. The algebraic and rank-residual forms are equivalent here in practice, not
+merely in theory.
 
-## 8. Open items — resolved by the maintainer, 2026-08-12
+**Consolidation is viable in Phase 9** on the numerical-identity criterion the brief sets.
+Caveat: `_partial_spearman_multi` is the only one accepting >1 control, so it must be the
+survivor, and `analysis/root_sensitivity.py:895` `partial_with_permutation` wraps a
+partial correlation with permutation machinery and is *not* a duplicate.
 
-All four items originally flagged as undetermined are now settled.
+### 5.2 Safe-Spearman helpers — nine copies, two behaviours
 
-1. **`$SCRATCH/data/annotations`** — **contains GeoJSON.** Confirmed. This makes
-   `run_slide_diagnostics.sh` a live hazard for the `total_area` arm of check H5; see
-   §5.2 for the full analysis and what needs re-reading on Narval.
-2. **Whether the `data/annotations`-pointing scripts were ever run post-migration** —
-   moot. `data/annotations` *held the ratio JSONs* when those scripts were written; the
-   ratio files were later moved to `data/annotations_ratio/`. Git history confirms
-   (§5.1). Those scripts were correct at the time; they are stale now. No past result
-   is invalidated.
-3. **`train_test_config.json` / `example_config.json`** — **not kept deliberately.**
-   Leftovers from the deleted `run_train_test.py` workflow. Archive candidates for
-   Phase 7. Nothing to be deleted at any point in this cleanup.
-4. **`data/old_annotations/`** — **genuinely different content**, based on older
-   un-updated annotations, not a duplicate of `data/annotations_ratio/`. Keep as
-   historical record; do not archive, do not delete.
+Nine modules define a private `_safe_rho` / `_rho` / `_safe_spearman`. Seven **hardcode a
+minimum n of 10**; two (`holeyroot_duct_checks.py`, `holeyness_asymmetry.py`)
+**parameterise it**.
 
-### 8.1 Still unverified — but nothing blocking
+That divergence is deliberate and load-bearing: with 8 slides, a hardcoded `n >= 10`
+guard silently returns `NaN` for every between-slide correlation, which reads in output
+as "not computed" rather than "n is small". Any consolidation must keep the parameterised
+form, or it will reintroduce that bug.
 
-- The recorded **H5 verdict** from the existing `slide_diagnostics` run (§5.2). Needs a
-  look at the Narval output directory. Does not block Phases 1–8; `slide_diagnostics`
-  is an analysis branch, outside this cleanup's scope.
-- Nothing else. **`converters/img_dims.txt` was checked and is consistent.**
+### 5.3 Patch-to-duct assignment — two rules, deliberately distinct
 
-### 8.2 Verified: the two dimension tables agree
+| Implementation | Rule |
+|---|---|
+| `analysis/holeyness.py:286` `assign_patches_to_ducts` | patch **centre** inside polygon |
+| `analysis/holeyness_roots.py:98` `assign_patches_to_ducts_overlap` | **area overlap** ≥ 25% of the patch |
 
-`converters/img_dims.txt` (the divisor `batch_convert.py` uses to produce ratio
-coordinates) and `data/slide_registry.py:KNOWN_NDPI_DIMENSIONS` (the multiplier
-`run_all.py` uses to turn them back into pixels) are **the same 16 keys with identical
-values, zero mismatches**. Checked programmatically.
+**Not a duplicate — two different estimands.** The centre rule excludes ~26% of ducts
+(systematically the smallest); the overlap rule exists to recover them. Every published
+number uses the centre rule. **These must not be merged.** A third copy of the overlap
+logic lives inside `holeyness_final.py`'s Task F; `holeyness_roots.py:120` states it was
+lifted from there, so that pair *is* a genuine duplicate.
 
-This matters more than its size suggests: it is the round-trip invariant behind the
-whole annotation path. `batch_convert` divides by `img_dims.txt`; `load_roi_polygons`
-multiplies by `original_full_width`, which comes from `slide_dimensions.json` if present
-and `KNOWN_NDPI_DIMENSIONS` otherwise. Because the two tables match, the round trip is
-exact and the fallback path is equivalent to the sidecar path. Worth stating in Methods.
+### 5.4 Other repetition
+
+- **JSON default-encoders**: `_json_default` is redefined in at least 8 analysis modules,
+  each handling numpy scalars/arrays identically. Low-risk consolidation, low payoff.
+- **Slide-clustered bootstrap**: implemented independently in
+  `holeyroot_duct_checks.py` and `holeyness_section_comparison.py`. Same resampling
+  scheme; not verified numerically identical.
+- **Duct-table loading**: `load_slide_list` / `parse_measurement_export` /
+  `load_duct_polygons` / `build_duct_table` are correctly imported from `holeyness.py` by
+  every downstream consumer rather than reimplemented. **No duplication here** — worth
+  stating, since it is the pattern the rest should follow.
 
 ---
 
-## 9. Recommended re-scoping before Phase 1
+## 6. Code-vs-documentation discrepancies
 
-Given §4, three later phases are now mostly or entirely empty:
+Code wins in every row.
 
-- **Phase 2** (coordinate docblock) — already done. Suggest converting it to a
-  *verification* step: confirm the existing docblock matches the code, and stop.
-- **Phase 6** (archive `validation/annotations.py` dead functions) — the file is gone.
-  What remains is auditing `validation/correlations.py` and
-  `analysis/cellularity_confound.py`, which the brief did not otherwise specify.
-- **Phase 7** (archive `run_train_test.py`) — the file is gone. The job-script
-  supersession half of Phase 7 is still fully live and is the larger piece.
+| Document | Claim | What the code shows |
+|---|---|---|
+| `PROJECT_STATE.md:79,391` | `run_train_test.py` exists and imports a broken `config.py` | File absent from the tree. Stale. |
+| `PROJECT_STATE.md:400,572` | `validation/annotations.py` provides `load_annotations()` | `validation/annotations.py` does not exist. |
+| Current brief | `paths.json` `annotations` → `data/annotations` | Points at `data/annotations_ratio`. Already fixed. |
+| Current brief | `paths.json` has an unread `stain_reference` key | No such key. All four keys are read. |
+| Current brief | `validation/annotations.py` holds dead mask-loading code | File does not exist. |
 
-Phase 1's stated task also dissolves (`paths.json` is already correct), but it gains two
-real items in its place: the broken `submit_annotation_check.sh` reference (§3.1) and the
-`data/annotations` vs `data/annotations_ratio` job-script hazard (§5). Both are
-decisions for you, not behaviour-preserving edits.
+`PROJECT_STATE.md` (90 KB, last modified 2026-07-28) predates the 2026-08-12 cleanup and
+is stale in at least the two rows above. It should not be used as a reference for tree
+structure.
+
+---
+
+## 7. Bearing on the remaining phases
+
+Reported so the plan can be adjusted before work starts, not discovered mid-phase.
+
+| Phase | Finding |
+|---|---|
+| **1** (write `docs/PIPELINE.md`) | `docs/PIPELINE_HANDOFF.md` already exists at 79 KB and covers the required structure — coordinate spaces and the round-trip invariant (Part 2), per-stage inputs/outputs (Parts 1–11), the three k-NN graphs (Part 8), UMAP as display-only, the missing-value convention (Part 10), projection and LOO (Part 12). **Recommend: audit and update it rather than writing a second document.** Writing `PIPELINE.md` alongside it creates two documents that will diverge. |
+| **2** (`KNOWN_ISSUES` / `FUTURE_WORK` / `ANALYST_ERRORS`) | None of the three exist. `docs/ANCHOR_VALIDATION_RECORD.md` §4 (error log), §5 (untrusted statistics) and §9 (roadmap) already cover perhaps half the requested content and can be drawn on. Genuine work remains. |
+| **3** (conversion/slide discovery) | **Near no-op.** Both named issues are already fixed. |
+| **4** (patching docblock) | `load_roi_polygons` already carries a substantial coordinate-system docstring (`patching.py:80-119`). Verify sufficiency rather than assume absence. |
+| **5** (cache contract) | Real work; not yet examined in detail. |
+| **6** (clustering/harmony/scVI) | Real work. Note `clustering.py`'s module docstring already documents the multi-graph situation thoroughly. |
+| **7** (`--root-cluster` / `--root-metric` dead flags) | Already marked vestigial in `pipeline_config.py` with an extensive comment block. Decision needed: remove, or leave as documented no-ops. The config comment warns that `run_individual.py` has its **own live** `--root-cluster` that must not be touched. |
+| **8** (archive `validation/annotations.py`) | **Target does not exist.** Phase reduces to whatever else validation needs. |
+| **9** (consolidate duplicates) | Viable for §5.1 (verified identical). Must not touch §5.3. Must preserve the parameterised guard in §5.2. |
+| **10** (archive `run_train_test.py`, review jobs) | **Primary target does not exist.** Job-script review is still real: 79 scripts, and the v3/timepoint families are likely superseded. Orphaned root configs (§4.3) are candidates. |
+
+---
+
+## 8. Files touched by this phase
+
+| File | Action |
+|---|---|
+| `reports/codebase_inventory.md` | **Modified** — replaced with this document |
+| `archive/reports/codebase_inventory_2026-08-12.md` | **Created** — verbatim copy of the prior inventory, preserved before supersession |
+
+No source file was created, modified, moved, or archived.

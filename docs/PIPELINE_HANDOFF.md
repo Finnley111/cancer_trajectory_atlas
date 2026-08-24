@@ -6,6 +6,25 @@ Written 2026-08-12 for handoff. Every constant and behaviour here was checked ag
 source. Where something is surprising, fragile, or a known trap, it is flagged inline
 rather than buried at the end.
 
+**Audited 2026-08-23.** Re-checked against the code and against findings from the
+anchor-validation work of 17–21 August. **One diagnosis in the original was wrong and has
+been corrected in place:** 2M-2's `pseudotime_std` anomaly was attributed to the non-finite
+clamp firing on a disconnected diffusion graph. It is not that — the graph has one
+component, the clamp never fired, and the cause is three sign-discordant roots. See Part 9
+and Part 16 item 6. Corrections and post-August-12 additions are marked **RESOLVED**,
+**ASYMMETRY** or dated inline; nothing was silently rewritten.
+
+### Which document to read
+
+| | |
+|---|---|
+| **This document** | Tutorial. Follows execution order, explains *why*, flags traps as you meet them. Read it once, straight through, to learn the pipeline. |
+| **`docs/PIPELINE.md`** | Terse reference. Same pipeline, every claim carrying a `file:line` citation, verified against implementation bodies rather than docstrings. Use it to check a specific fact fast. |
+| **`docs/ANCHOR_VALIDATION_RECORD.md`** | The experimental record: what was tested about the pseudotime anchor, what held, what did not, and the error log. |
+
+The two pipeline documents were written independently and then reconciled. Where they still
+disagree, `PIPELINE.md` carries the line citation — check that first, then the source.
+
 ---
 
 ## How to read this document
@@ -312,6 +331,12 @@ Other behaviour:
   Anything else (`Ignore*`, `Necrosis`, `Region*`) → exclusion. Exact, case-sensitive match.
 - **Holes:** inner rings become compound `Path`s via `_make_path()`, so a donut-shaped ROI
   correctly excludes its middle.
+  > **ASYMMETRY worth knowing.** Patch extraction honours holes; the *duct* loader used by
+  > the holeyness analyses does not. `holeyness.load_duct_polygons` reads
+  > `geometry["coordinates"][0]` — the outer ring only. So the two halves of the codebase
+  > disagree about what a hole is. That is deliberate on the duct side (`hole_pct` is a
+  > fraction of the *outer* duct area, so the lumen must not be subtracted), but if you ever
+  > compare an in-ROI patch count against a duct area, they are not measuring the same region.
 - **Right-half discard:** polygons whose vertex-mean centroid has `cx > cropped_w` (or
   `cy > cropped_h`, which never fires since the crop is horizontal) are dropped — they belong
   to the duplicate copy. Runs only when both `cropped_w` and `original_full_width` are supplied.
@@ -657,17 +682,37 @@ Persisted: `adata.uns['dpt_root_candidates']` (the actual roots, int64) and
 Infinite DPT values are clamped **per root**, to that root's own maximum finite value, *before*
 aggregation — so partial disconnection biases the median rather than propagating `inf`.
 
-> **OPEN — two live caveats about this step, both under active investigation:**
+> **RESOLVED 2026-08-21 — read this before trusting the two caveats that used to be here.**
 >
-> **Root ties.** In section 2M-2, all 20 roots have `nuclear_density` exactly `0.0`, drawn
-> from 21 such patches (recorded by `eccentricity_check` Task 0). Which 20 of the 21 win is
-> decided by `argsort`'s tie-breaking, i.e. arbitrarily.
-> `diagnostics/inspect_root_patches.py` exists to look at what those patches actually are.
+> **Root ties — CONFIRMED, and worse than tie-breaking.** In 2M-2 all 20 roots have
+> `nuclear_density` exactly `0.0`, drawn from 21 such patches, so which 20 win is decided
+> arbitrarily by `argsort`. Later inspection added a harder fact: **none of those 20 roots
+> lies inside any Tumor annotation** (`duct_id` is null for all of them). `0.0` density means
+> either genuinely acellular tissue *or* a segmentation failure — the two are
+> indistinguishable in the stored value. See `docs/ANCHOR_VALIDATION_RECORD.md` §4, error #2.
 >
-> **The clamp and `pseudotime_std`.** In 2M-2, `pseudotime_std` is an almost perfect affine
-> function of `pseudotime` (R² ≈ 1). That is not what per-patch uncertainty looks like — it is
-> the signature of the non-finite clamp firing, i.e. of a disconnected diffusion graph.
-> `diagnostics/dpt_clamping_check.py` tests this directly.
+> **The clamp and `pseudotime_std` — the diagnosis below was WRONG.** This document
+> originally attributed 2M-2's `pseudotime_std` anomaly to the non-finite clamp firing on a
+> disconnected diffusion graph. That hypothesis was tested and **contradicted**:
+>
+> - the diffusion graph has **one connected component**, not several
+>   (`n_graph_components: 1`, from `holeyness_roots.assert_roots_connected`);
+> - **`n_roots_clamped` is 0** — the clamp never fired;
+> - the spread traces instead to **3 of 20 roots ordering the manifold backwards** relative to
+>   the median of the other 19 (leave-one-out Spearman < 0). Two of them sit at pseudotime
+>   0.717 and 0.673 while the other 18 span 0.009–0.144. Dropping those three takes
+>   `pseudotime_std` from **27.70% to 3.40%** of the axis range.
+>
+> The affine `std`-vs-`pseudotime` observation still stands as an *observation*; only the
+> cause attributed to it was wrong. `diagnostics/dpt_clamping_check.py` remains the right tool
+> to rule the clamp in or out — it is what ruled it out here.
+>
+> **Do not use `pseudotime_std` as an anchor-health check.** Repairing those 3 roots improved
+> it 8.2-fold while moving the axis itself by rho **0.9621** — barely at all. A median across
+> 20 roots is robust to 3 outliers; `std` is not, so it reads dispersion the median has
+> already absorbed. Use **mean leave-one-out concordance across roots** instead (2M-1 scores
+> 0.726, 2M-2 only 0.478). Keep `std` for what it is good at: a per-patch uncertainty map.
+> Full reasoning in `docs/ANCHOR_VALIDATION_RECORD.md` §7.
 >
 > Also note `pseudotime` is min-max normalized to [0, 1] but `pseudotime_std` is stored **raw**,
 > on the diffusion-distance scale, computed **before** that normalization. **The two are not on
@@ -683,6 +728,13 @@ a warning. **Not used by `run_all`.**
 > so the cluster anchor is the right choice there. Do not "unify" the two paths. Note
 > `compute_dpt` writes `dpt_pseudotime` (which the multi-root path does not) and does **not**
 > write `pseudotime_std`.
+
+> **The diffusion graph differs too, and this is easy to miss.** `run_individual.py` calls
+> `compute_diffusion_map(adata, n_neighbors=min(30, len(features) - 1), n_comps=10)`
+> (`run_individual.py:318`) — **k is adaptive**, capped by the slide's own patch count, not the
+> fixed 30 the atlas path uses. On a slide yielding fewer than 31 patches the graph is
+> materially different from anything `run_all` builds. Another reason its pseudotime is not
+> comparable to a per-section result.
 
 ---
 
@@ -1014,7 +1066,8 @@ section, cross-section morphological correlates. Re-runs nothing.
 
 ## Part 14 — Analysis branches, module by module
 
-`analysis/` contains ~25 self-contained investigations, each driven by its own `jobs/` script.
+`analysis/` contains **53 modules** as of 2026-08-23 (it was ~25 when this document was first
+written), each a self-contained investigation driven by its own `jobs/` script.
 Treat them as a **lab notebook**, not as pipeline. Read the docstring and the matching report in
 `reports/` before running one.
 
@@ -1234,10 +1287,52 @@ The blocking requirements, in order:
 > *no output may be interpreted or shown to anyone as a timepoint result until the PI's biology
 > question and the stain-versus-cellularity disambiguation are resolved.*
 
-### Eccentricity
+### Eccentricity — the 2026-08-11 rejection was itself overturned
 
-`eccentricity_check.py` — **rejected 2026-08-11.** Live concerns it left behind: a
-slide-dominated late tail, and the two sections pointing opposite morphological ways.
+`eccentricity_check.py` was read on 2026-08-11 as showing the axis is an *eccentricity*
+measure (atypical in any direction) rather than a trajectory, on the strength of
+`rho(PT, diffusion-map centroid distance)` ≈ 0.80 against `rho(PT, DC1)` ≈ 0.50.
+
+**That reading does not survive.** The centroid-distance correlation is **partly true by
+construction** — DPT pseudotime *is* a diffusion distance from its roots, so a high value
+there is definitional and cannot be evidence. In the spaces where DPT's construction does
+*not* force the answer, the picture reverses: morphological eccentricity is only 0.15–0.28
+(weaker still within slides), and **0 of 6 features show both tails enriched** among
+late-pseudotime patches, with 4–5 unidirectional. That is the trajectory signature, not the
+eccentricity one.
+
+Both "live concerns" it left behind are now characterised:
+
+- **Slide-dominated late tail — real, and quantified.** The late decile is 3.3–3.6× one
+  slide against 12.5% uniform. `eccentricity_within_slide.py` shows the cohort late
+  *subclusters* largely **are** slides (Cramér's V 0.81 / 0.54), so the "opposing features"
+  verdict is a batch split rather than two late phenotypes. Within slides the eccentricity
+  signature is **absent** on every axis tested.
+- **Sections pointing opposite ways — an anchor artifact.** It tracked the duct-size
+  extremity of the root set, not biology. See `docs/ANCHOR_VALIDATION_RECORD.md` §3.2.
+
+### Anchor validation — added 17–21 August 2026
+
+Nine modules written after this document's first draft. They exist to answer one question:
+**is the pseudotime axis a property of the tissue, or of where the roots were placed?**
+Full narrative in `docs/ANCHOR_VALIDATION_RECORD.md`; this table is the index.
+
+| Module | Question | Headline |
+|---|---|---|
+| `anchor_area_control.py` | Is `rho(pt, duct area)` a duct-size artifact? | **Yes.** Size-matched anchors that ignore hole % reproduce it in full. All 20 root ducts sit below the median eligible duct (p ≈ 1e-6). |
+| `export_anchor_axis.py` | Persist an alternative-anchor axis as a readable run dir | Supports `area_stratified`, `area_matched_surrogate`, `v2_repaired`. Gated against the values it must reproduce. |
+| `eccentricity_within_slide.py` | Is the late structure biology or one slide? | Late subclusters largely **are** slides; within slides the eccentricity signature is absent. |
+| `duct_white_fraction.py` | Does `hole_pct` track actual white space? | **Yes** — rho 0.92 (2M-1) / 0.79 (2M-2) by direct polygon rasterisation. The annotation is sound; the *root rule* built on it was not. |
+| `holeyroot_duct_checks.py` | Nesting, intervals, and what `hole_pct` measures | Effects hold within slides, 8/8. Intervals are narrow, not wide. `texture_entropy` is **not** an independent validator. |
+| `holeyness_asymmetry.py` | Why does validation differ by section? | The premise was wrong — the circulated 2M-2 "0.020" was a different quantity. Real value +0.1906, 7/8 slides. |
+| `holeyness_section_comparison.py` | Do the sections' correlations actually differ? | Exact test over all C(16,8)=12,870 relabellings: **no evidence they do**. |
+| `holeyness_repaired_sensitivity.py` | Does repairing 2M-2's roots fix the divergence? | **No** — a pre-declared mechanistic hypothesis, refuted. Reported as such. |
+| `holeyroot_compare.py` | Holeyness-rooted vs density-rooted axis | Its headline discriminator turned out to be the duct-size artifact above. |
+
+> **Read `ANCHOR_VALIDATION_RECORD.md` §5 before quoting any correlation from this family.**
+> It lists twelve statistics that are circular, superseded, artifactual or null. The
+> surviving independent validators for 2M-2 are **`mean_nuclear_area` and `nc_ratio`** —
+> that is the whole list.
 
 ---
 
@@ -1295,11 +1390,29 @@ the non-monotonic verdict rule, do not put weight on the word "POSITIVE".
 nuclear density in 2M-2; every feature `collapses` in 2M-1. Same code, same seed — a real
 difference needing an explanation.
 
-**5. The 2M-2 root set is a tie.** All 20 roots have `nuclear_density` exactly 0.0, from 21 such
-patches. Which 20 win is `argsort` tie-breaking.
+**5. The 2M-2 root set is a tie — CONFIRMED, and worse.** All 20 roots have
+`nuclear_density` exactly 0.0, from 21 such patches, so which 20 win is `argsort`
+tie-breaking. Later work added: **none of the 20 lies inside any Tumor annotation**, and
+`0.0` cannot be told apart from a segmentation failure. See
+`docs/ANCHOR_VALIDATION_RECORD.md` §4, error #2.
 
-**6. 2M-2's `pseudotime_std` looks like a clamp artifact**, not uncertainty (R² ≈ 1 against
-pseudotime). See `diagnostics/dpt_clamping_check.py`.
+**6. 2M-2's `pseudotime_std` — RESOLVED 2026-08-21, and it was NOT a clamp artifact.**
+The diffusion graph has one connected component and `n_roots_clamped` is 0, so the clamp
+never fired. The spread came from **3 of 20 roots ordering the manifold backwards**;
+dropping them takes `pseudotime_std` from 27.70% to 3.40% of range while moving the axis
+by only rho 0.9621. Full account in Part 9 and in `docs/ANCHOR_VALIDATION_RECORD.md` §7.
+
+**7. Section 4's disagreement is now partly explained, and item 4 above needs re-reading.**
+The "every feature SURVIVES in 2M-2, every feature collapses in 2M-1" asymmetry rests on
+partialling out `nuclear_density` — which is *also* the root selector, so that analysis was
+never independent of the anchor. Under a size-neutral anchor `nuclear_density`'s own
+correlation goes to +0.101 (2M-1) vs −0.244 (2M-2): the sections disagree in *sign*.
+
+**8. `rho(duct area, pseudotime)` diverges between sections and nobody knows why.**
++0.4325 (2M-1) vs −0.0844 (2M-2), differing at the smallest p an exact 12,870-way
+slide-relabelling test can produce. It is **anchor-rule-dependent** but **not**
+root-repair-dependent, and **not** explained by duct-size/density geometry —
+`rho(area, nuclear_density)` is +0.389 vs +0.342, near-identical. Genuinely open.
 
 ---
 
