@@ -476,6 +476,23 @@ the next person the same.
 | 7 | **Operator-precedence blanking a verdict** | `a + b + c if p is not None else ""` binds as `(a + b + c) if …`, erasing an entire verdict string whenever one optional field was missing. | Synthetic test | Caught before first real run |
 | 8 | **Coordinates assumed to be in `adata.obs`** | Patch x/y live only in `results.csv`; `obs` never carries them. A module built on the wrong assumption crashed on first submission. | Job failure, then reading `run_all.py` | One failed job; fixed with a row-alignment verifier |
 
+> **Status update on error #2, 2026-08-24.** The table above records what each error *was* when
+> found, and is left as written. Two things have changed for #2 since. The **sentinel collision is
+> fixed**: FIX 1a made segmentation failures return `np.nan`, so a failure and an acellular patch
+> no longer share a value. But the **consequence for the anchor is still live**, for a reason that
+> is not a bug at all: a genuinely acellular patch correctly reads 0.0, and the root rule selects
+> the *n lowest-density* patches, so empty tissue still sorts to the front of the root queue by
+> construction. That is why 2M-2's anchor remains degenerate. Rewritten as
+> `KNOWN_ISSUES.md` §3.2.
+>
+> **A sibling of #2 was found in the 2026-08-24 correctness audit** and is *latent*, not live:
+> `validation/correlations.py:89` pads the permutation null with `0.0` on a failed computation,
+> which is anti-conservative. It cannot fire in any recorded run. See `KNOWN_ISSUES.md` §6.1.
+>
+> **Error #8 also has a wider scope than the table implies.** The row-alignment assumption that
+> crashed that one job is depended on by **16 modules**, and `anchor_area_control.py` is the only
+> one that verifies it. See `KNOWN_ISSUES.md` §7.1.
+
 **Pattern worth internalising:** five of these eight are *the same kind of error* — a number that
 means something other than its name suggests. Density that means "or the segmenter crashed."
 `h_intensity` that means two different things across runs. A correlation labelled by the wrong

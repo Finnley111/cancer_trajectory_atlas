@@ -432,6 +432,15 @@ log, so a reader following a citation lands on the current answer: §2.4 (four u
 modules, all kept), §4.3 (two root configs, archived), §5.1 (four partial-Spearman
 implementations, not merged), §7 rows 7, 9 and 10.
 
+**A correctness audit followed on 2026-08-24** and is recorded in `docs/KNOWN_ISSUES.md`
+sections 5 to 9, not here. This document is a reachability and provenance survey; that one is
+the defect register. The audit swept the repo for bare `except`, sentinel substitution, silent
+clamping and boundary handling. Two results are worth repeating here because they bear on this
+document's own contents: **there is no bare `except:` or `except: pass` anywhere in live code**,
+and the `results.csv` / `adata.obs` row-order invariant that section 5.4 below treats as a
+duplication question is in fact an **unchecked contract that 16 modules depend on**
+(`KNOWN_ISSUES.md` §7.1).
+
 Two of this document's own recommendations did not survive contact with a full grep. The
 "archive candidates for Phase 10" framing in §2.4 assumed reachability from `run_all.py`
 was the right test; it is not, in a repo where job scripts and the README are both entry

@@ -128,17 +128,25 @@ See `docs/KNOWN_ISSUES.md` §1.1–1.3.
 - Patches carry `slide_name` and `(x, y)` in cropped-PNG space. `slide_ids` indexes into
   a `slide_names` list.
 - **Patch coordinates are not in `adata.obs`.** `obs` accumulates `cluster` and `slide_id`
-  (`diffusion.py:35-36`), `mouse_id` and `section_number` (`run_all.py:563-564`),
-  `pseudotime` and `pseudotime_std` (`diffusion.py:371-373`), and the morphological
-  features (`run_all.py:664`) — but never `x`, `y` or `slide_name`. Those go only to
-  `results.csv` (`run_all.py:719-730`), built from the same arrays in the same block, so
-  the two are in identical row order **by construction**. Several analysis modules depend
-  on that invariant; at least one crashed on first submission for assuming coordinates
-  were in `obs`.
+  (`diffusion.py:35-36`), `mouse_id` and `section_number` (`run_all.py:572-573`),
+  `pseudotime` and `pseudotime_std` (`diffusion.py:372-374`), and the morphological
+  features (`run_all.py:672-673`) — but never `x`, `y` or `slide_name`. Those go only to
+  `results.csv` (`run_all.py:728-739`), built from the same arrays in the same block, so
+  the two are in identical row order **by construction**.
+- **That row-order invariant is unchecked, and 16 modules depend on it.** There is no
+  shared key column and no assertion anywhere. Only `analysis/anchor_area_control.py`
+  verifies it (`_verify_row_alignment`, line 167), and only because the assumption
+  already crashed job 1200392. A future change to either writer misaligns every
+  dependent module **with no error**. See `KNOWN_ISSUES.md` §7.1, which is item 2 on
+  the fix shortlist.
+- **`slide_id` integers are run-local.** They are positions in `slide_names`, itself a
+  sorted, `--slides`-filtered glob, so two runs over different subsets assign different
+  integers to the same slide. `results.csv` carries both name and id; `adata.obs` carries
+  only the id. **Cross-run comparisons must join on `slide_name`.** See §7.3 there.
 - Duct assignment is **patch centre inside Tumor polygon**
-  (`analysis/holeyness.py:286`). This excludes ~26% of ducts (2M-1) and ~22% (2M-2),
+  (`analysis/holeyness.py:305`). This excludes ~26% of ducts (2M-1) and ~22% (2M-2),
   systematically the smallest. An area-overlap alternative exists
-  (`analysis/holeyness_roots.py:98`) but is **not** what any published number used.
+  (`analysis/holeyness_roots.py:99`) but is **not** what any published number used.
 
 ---
 

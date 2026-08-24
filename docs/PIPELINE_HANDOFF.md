@@ -84,6 +84,12 @@ Sixteen H&E whole-slide images of MCF7 breast-cancer xenografts. Four mice
 > 16-slide LOO **leaks** — holding out one slide leaves its gland partner in training. The
 > within-section bootstraps are unaffected, because within one section no two slides share a
 > gland. See `docs/KNOWN_ISSUES.md` sections 1.1-1.3.
+
+> **Before you change anything, read `docs/KNOWN_ISSUES.md` section 5.** It is a four-item
+> ordered shortlist from the 2026-08-24 correctness audit, with the reasoning for the order.
+> Sections 6 to 8 there are the full findings. Most are **latent**: real defects that no
+> recorded run triggered, deliberately left unfixed and recorded so you do not have to
+> rediscover them. Section 6 states for each one whether any reported number is affected.
 >
 > **It also enabled the cohort's strongest measurement.** Matched tissue across two fixations
 > gives a within-gland fixation effect, free of every between-animal source of variation:
@@ -916,7 +922,7 @@ reference atlas into one directory; `run_all` writes the same files individually
 | File | Contents |
 |---|---|
 | `adata_full.h5ad` | Everything — `X_embed`, obs, uns (incl. root candidates), obsm (UMAP, diffmap). **The canonical output.** |
-| `results.csv` | One row per patch: `x, y, slide_id, slide_name, cluster, pseudotime, pseudotime_std` + the 7 features |
+| `results.csv` | One row per patch: `x, y, slide_id, slide_name, cluster, pseudotime, pseudotime_std` + the 7 features. **Row `i` here is row `i` of `adata.obs`, by construction and by nothing else** — there is no key column and no assertion. 16 modules rely on it; see `KNOWN_ISSUES.md` §7.1. Also note `slide_id` is run-local, so join across runs on `slide_name` (§7.3). |
 | `validation.json` | Correlations, permutation tests, cluster ordering, spatial secondary, verdict + summary counts |
 | `feature_failures.json` | Extraction failure accounting for both passes |
 | `slide_independence.json` | Per-cluster slide composition + dominance warnings |
