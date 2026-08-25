@@ -179,8 +179,8 @@ third-party library default, never set by this codebase.
 |---|---|---|---|---|---|
 | `patch_size` | 112 | yes, `--patch-size 112` | 112 | CLI | **deliberate** (matches config) |
 | `stride` | 96 | yes, `--stride 96` | 96 | CLI | **deliberate** |
-| `ndpi_scale` | 1.0 | n/a (`--convert` only) | 1.0 | cfg-default | conversion used `--ndpi-scale 1.0` explicitly (`jobs/convert_ndpi.sh:26`) |
-| `ndpi_level` | 0 | n/a (`--convert` only) | 0 | cfg-default | `jobs/convert_ndpi.sh:25` passes 0 explicitly |
+| `ndpi_scale` | 1.0 | n/a (`--convert` only) | **0.5** | **MEASURED** | **Corrected 2026-08-25.** This row previously read 1.0, taken from the flag `convert_ndpi.sh` passed. That flag was wrong. Scale **0.5** is what reproduces the reference PNGs bit-identically (job 1648162). The config default of 1.0 is therefore NOT what the cohort used. |
+| `ndpi_level` | 0 | n/a (`--convert` only) | 0 | **MEASURED** | Level 0 confirmed by the same job. Level 1 was tested and rejected: same dimensions, different pixels. |
 | magnification | — | — | — | — | **CORRECTED 2026-08-24, see below.** `--ndpi-level` and `--ndpi-scale` ARE pipeline parameters, and the reference PNGs were NOT produced at level 0 / scale 1.0. |
 | `white_thresh` | not in config | no | 220 | **fn-default** (`features/patching.py:21,230`) | **DEFAULT, not a choice** |
 | `white_frac` | not in config | no | 0.70 | **fn-default** (`patching.py:22,231`) | **DEFAULT, not a choice** |
@@ -219,10 +219,11 @@ downsample.
 
 **Consequences.**
 
-- `jobs/convert_ndpi.sh` does **not** reproduce the dataset the pipeline ran on. Its NDPI
-  path was already known stale (`docs/PIPELINE_HANDOFF.md`); its `--ndpi-level 0
-  --ndpi-scale 1.0` flags are wrong too. Anyone following it would build a cohort at 2x
-  resolution and 4x the patch count, and every absolute number would differ.
+- `jobs/convert_ndpi.sh` did **not** reproduce the dataset the pipeline ran on, and has
+  been **corrected (2026-08-25)**. Its NDPI path was already known stale
+  (`docs/PIPELINE_HANDOFF.md`); its `--ndpi-scale 1.0` was wrong too. Following the old
+  version would have built a cohort at 2x resolution and 4x the patch count, with every
+  absolute number differing. See the fix note below.
 - No recorded result is affected. The existing PNGs, the feature cache and every atlas
   run are internally consistent; only the *documented recipe for regenerating them* is
   wrong.
@@ -252,19 +253,25 @@ against the cached 616 and 1228. The scanner's own pyramid level and a LANCZOS r
 level 0 are not the same image, and the ~2% of borderline patches that sit near the
 `white_frac` and `tissue_threshold` boundaries flip between them.
 
-**Two things in `jobs/convert_ndpi.sh` are therefore wrong**, and it would not regenerate
-this cohort if submitted today:
+**Two things in `jobs/convert_ndpi.sh` were therefore wrong**, and it would not have
+regenerated this cohort:
 
-| | it says | it should say |
+| | it said (before 2026-08-25) | it says now |
 |---|---|---|
 | NDPI source | `$SCRATCH/data/MCF7_x5` (does not exist) | `$SCRATCH/data/ndpi` |
 | resolution | `--ndpi-level 0 --ndpi-scale 1.0` | `--ndpi-level 0 --ndpi-scale 0.5` |
 
 The stale path was already recorded in `docs/PIPELINE_HANDOFF.md`; the resolution error
-was not known until this measurement. **Left unfixed**, because editing that script is a
-behaviour change to an existing entry point rather than documentation, and it is a
-decision for the maintainer. Anyone regenerating the cohort should use the recipe above,
-not that script.
+was not known until this measurement. **FIXED 2026-08-25.** `jobs/convert_ndpi.sh` now passes
+`--ndpi-dir $SCRATCH/data/ndpi --ndpi-level 0 --ndpi-scale 0.5`, carries the evidence in
+its header, and is stamped `SCRIPT_REV=2026-08-25a`. Both directories are overridable so
+a test conversion need not touch the reference data.
+
+**The fix also removed a live hazard.** `run_all --convert` skips existing PNGs but
+rewrites `slide_dimensions.json` unconditionally (`run_all.py:129-133`). Running the old
+version against `$SCRATCH/data/MCF7_x5_cropped` would have left the images alone while
+silently replacing the sidecar with wrong dimensions, and every ratio-to-pixel annotation
+transform reads that sidecar. The script now warns before rewriting it.
 
 ### 3.2 Additional parameters worth recording
 

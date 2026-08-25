@@ -162,7 +162,7 @@ Parameter values are as invoked by the reference run `jobs/run_per_section_v2.sh
 | Module | `run_all.convert_ndpi_to_left_half_png` (`run_all.py:51`) |
 | Input | `.ndpi` files |
 | Output | left-half PNGs + `slide_dimensions.json` (`run_all.py:122`) |
-| Parameters | `--ndpi-level 0`, `--ndpi-scale 1.0` (`jobs/convert_ndpi.sh:25-26`) |
+| Parameters | `--ndpi-level 0`, **`--ndpi-scale 0.5`** (`jobs/convert_ndpi.sh`). **Corrected 2026-08-25:** this table previously said scale 1.0, which is what the script passed but NOT what produced the reference PNGs. Scale 0.5 reproduces them bit-identically (job 1648162); scale 1.0 gives twice the linear resolution and ~4x the patch count. See `reports/codebase_inventory.md` §3.1. |
 
 **Why:** the NDPIs contain two copies of the same slide side by side; annotations were
 drawn on the left, so the right is discarded (`run_all.py:54-55`).

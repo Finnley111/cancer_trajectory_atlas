@@ -1388,7 +1388,7 @@ Full narrative in `docs/ANCHOR_VALIDATION_RECORD.md`; this table is the index.
 | **The canonical reference config** | `jobs/run_per_section_v2.sh` |
 | Baseline per-section + LOO + cross-section | `jobs/run_per_section.sh` |
 | Populate the feature cache | `jobs/run_cache_population.sh` |
-| Convert NDPIs only | `jobs/convert_ndpi.sh` ⚠ *stale NDPI path — points at `$SCRATCH/data/MCF7_x5`, which does not exist; the files are in `$SCRATCH/data/ndpi`* |
+| Convert NDPIs only | `jobs/convert_ndpi.sh` — **corrected 2026-08-25**, now `--ndpi-dir $SCRATCH/data/ndpi --ndpi-level 0 --ndpi-scale 0.5`. Verify any conversion with `jobs/verify_conversion_smoke.sh`. |
 | Quick end-to-end smoke test | `jobs/run_smoke_test.sh` |
 | Post-run QC | `jobs/submit_qc.sh` |
 | Verify a code change changed nothing | `jobs/run_per_section_v3_regression.sh` + `analysis/v3_regression_check.py` |
@@ -1484,7 +1484,12 @@ Roughly by severity.
 12. **PCA width is data-dependent.** Check widths match before comparing runs component-wise.
 13. **`run_individual.py` results are not comparable** with atlas results — no cap, no cache,
     per-slide PCA basis, single-root DPT, and a default root that is an arbitrary Leiden label.
-14. **`jobs/convert_ndpi.sh` has a stale NDPI path.**
+14. **The cohort was converted at `--ndpi-scale 0.5`, not 1.0.** `jobs/convert_ndpi.sh`
+    passed 1.0 and pointed at a non-existent NDPI directory, so it could not regenerate
+    the dataset; **both fixed 2026-08-25**. Scale 1.0 gives twice the linear resolution and
+    roughly 4x the patch count. Verified by reproducing two reference PNGs bit-identically
+    at level 0 / scale 0.5 (`jobs/verify_conversion_smoke.sh`, job 1648162). The "x5" in
+    `MCF7_x5_cropped` is therefore meaningful, not vestigial labelling.
 
 ---
 
