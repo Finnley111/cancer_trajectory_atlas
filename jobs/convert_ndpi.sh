@@ -52,7 +52,7 @@
 set -euo pipefail
 
 # Revision of THIS FILE, printed below so a job log says which version ran.
-SCRIPT_REV="2026-08-25a"
+SCRIPT_REV="2026-08-25b"
 
 # paths.json "raw_ndpi" is authoritative for the NDPI source.
 NDPI_DIR="${NDPI_DIR:-$SCRATCH/data/ndpi}"
@@ -82,7 +82,17 @@ if [ ! -d "$NDPI_DIR" ]; then
     exit 1
 fi
 
-echo -n "NDPI files: "; ls "$NDPI_DIR"/*.ndpi 2>/dev/null | wc -l
+# Counted with find, not `ls ... | wc -l`. Under `set -o pipefail` a glob that
+# matches nothing makes ls fail, the pipeline fails, and `set -e` kills the job
+# after printing a bare "0" and no explanation. find returns success on an empty
+# result, so the count is followed by a real error message.
+N_NDPI=$(find "$NDPI_DIR" -maxdepth 1 -name '*.ndpi' | wc -l)
+echo "NDPI files: $N_NDPI"
+if [ "$N_NDPI" -eq 0 ]; then
+    echo "ERROR: no .ndpi files in $NDPI_DIR"
+    echo "  Locate them with: find \$SCRATCH -maxdepth 3 -name '*.ndpi' | head"
+    exit 1
+fi
 
 # Existing PNGs are skipped by --convert, but slide_dimensions.json is rewritten
 # every time. Say so, because that file is what every ratio-coordinate
@@ -109,10 +119,8 @@ python -m cancer_trajectory_atlas.run_all \
     --ndpi-scale "$NDPI_SCALE"
 
 echo ""
-echo "Done. PNG count:"
-ls "$PNG_DIR"/*.png 2>/dev/null | wc -l
-echo "Output size:"
-du -sh "$PNG_DIR" 2>/dev/null
+echo "Done. PNG count: $(find "$PNG_DIR" -maxdepth 1 -name '*.png' | wc -l)"
+echo "Output size:   $(du -sh "$PNG_DIR" 2>/dev/null | cut -f1)"
 
 echo ""
 echo "Verify the conversion reproduces the reference:"
