@@ -404,32 +404,57 @@ def skip(label, why):
     emit(f"          {why}")
 
 
-def mean_abs_pixel_diff(path_a, path_b):
-    """Mean |a - b| over all channels, accumulated in row stripes.
+def pixel_difference_stats(path_a, path_b):
+    """Compare two PNGs pixel by pixel, accumulated in row stripes.
 
-    Returns (mean_abs_diff, n_channel_values) or (None, shapes) when the two
-    images differ in size, in which case a per-pixel comparison is undefined.
+    Returns a dict of statistics, or {"shapes": [...]} when the sizes differ and
+    a per-pixel comparison is undefined.
+
+    PNG is LOSSLESS, so any non-zero difference here proves the SOURCE pixels
+    differ. It is never an encoder artifact. That makes this the decisive test
+    for which downsampling route produced the reference PNGs: the correct route
+    gives all-zero, and any other route gives a broad scatter of small
+    differences.
+
+    ``frac_differing`` is what separates the two failure modes the mean alone
+    cannot. A few pixels differing a lot (rare decode edge cases) gives a tiny
+    fraction; a different downsampling route gives a large one, because almost
+    every textured pixel lands slightly differently.
 
     The stripe loop bounds the NUMPY working set, not total memory. PIL's
     ``crop`` calls ``load`` internally, so both PNGs are fully decoded and
-    resident (roughly 6 GB each at these dimensions). What striping avoids is a
-    third and fourth full-size copy in int16 for the subtraction. Peak is
-    therefore about 2 decoded images plus one stripe pair, not 4 full arrays.
+    resident (roughly 6 GB each at these dimensions). Striping avoids a third
+    and fourth full-size copy in int16 for the subtraction.
     """
     with Image.open(path_a) as ia, Image.open(path_b) as ib:
         if ia.size != ib.size:
-            return None, (ia.size, ib.size)
+            return {"shapes": [list(ia.size), list(ib.size)]}
         w, h = ia.size
         total = 0.0
+        n_diff = 0
         count = 0
+        max_diff = 0
         for top in range(0, h, STRIPE_ROWS):
             bot = min(top + STRIPE_ROWS, h)
             a = np.asarray(ia.crop((0, top, w, bot)).convert("RGB"), dtype=np.int16)
             b = np.asarray(ib.crop((0, top, w, bot)).convert("RGB"), dtype=np.int16)
-            total += float(np.abs(a - b).sum())
-            count += a.size
-            del a, b
-        return (total / count if count else 0.0), count
+            d = np.abs(a - b)
+            total += float(d.sum())
+            n_diff += int(np.count_nonzero(d))
+            m = int(d.max()) if d.size else 0
+            if m > max_diff:
+                max_diff = m
+            count += d.size
+            del a, b, d
+        mean_all = total / count if count else 0.0
+        return {
+            "n_channel_values": count,
+            "mean_abs_diff": mean_all,
+            "n_differing": n_diff,
+            "frac_differing": (n_diff / count) if count else 0.0,
+            "max_abs_diff": max_diff,
+            "mean_over_differing": (total / n_diff) if n_diff else 0.0,
+        }
 
 
 emit("=" * 72)
@@ -574,11 +599,27 @@ for slide in SLIDES:
             if n_patches == cached_rows:
                 ok(f"[{slide}] patch count vs cached rows", f"{n_patches}")
             else:
+                delta = n_patches - cached_rows
+                pct = 100.0 * abs(delta) / cached_rows if cached_rows else float("inf")
+                if pct < 5.0:
+                    note = (
+                        "Difference is %+d patches (%.2f%%). A difference this "
+                        "small is what BORDERLINE PATCHES FLIPPING across the "
+                        "white_frac=0.70 or tissue_threshold=0.5 boundary looks "
+                        "like, and that happens whenever the pixels differ at "
+                        "all. Read the pixel diagnostic below before concluding "
+                        "the code changed: if the PNGs are not identical, this "
+                        "follows from that, and the fix is to convert by the "
+                        "route that reproduces the reference exactly."
+                        % (delta, pct))
+                else:
+                    note = (
+                        "Difference is %+d patches (%.2f%%). That is far too "
+                        "large for threshold-boundary flips. Extraction geometry "
+                        "or a tissue filter really did change."
+                        % (delta, pct))
                 fail(f"[{slide}] patch count vs cached rows",
-                     f"{cached_rows} (cached)", f"{n_patches} (fresh)",
-                     "Extraction geometry or a tissue filter changed. This is a "
-                     "real failure: patch count is set by geometry and the "
-                     "filters, so it is reproducible even when PNG bytes are not.")
+                     f"{cached_rows} (cached)", f"{n_patches} (fresh)", note)
 
     # 4. DIAGNOSTIC ONLY — never asserted on
     existing_png = EXISTING_PNG_DIR / png_name
@@ -586,19 +627,29 @@ for slide in SLIDES:
         emit(f"  INFO  [{slide}] pixel diff: reference PNG absent, skipped")
     else:
         try:
-            mad, info = mean_abs_pixel_diff(fresh_png, existing_png)
-            if mad is None:
-                emit(f"  INFO  [{slide}] pixel diff: shapes differ {info}, "
+            st = pixel_difference_stats(fresh_png, existing_png)
+            diagnostics[slide_stem] = st
+            if "shapes" in st:
+                emit(f"  INFO  [{slide}] pixel diff: shapes differ {st['shapes']}, "
                      "not computed (the dimension assertion above is the real check)")
-                diagnostics[slide_stem] = {"mean_abs_pixel_diff": None,
-                                           "shapes": [list(x) for x in info]}
+            elif st["n_differing"] == 0:
+                emit(f"  INFO  [{slide}] pixel diff: IDENTICAL "
+                     f"({st['n_channel_values']} channel values, all equal)")
+                emit("        This is the conversion route that produced the "
+                     "reference PNGs.")
             else:
-                emit(f"  INFO  [{slide}] mean |pixel diff| = {mad:.6f} "
-                     f"over {info} channel-values")
-                emit(f"        DIAGNOSTIC ONLY. A small non-zero value is expected "
-                     f"and is NOT a failure.")
-                diagnostics[slide_stem] = {"mean_abs_pixel_diff": mad,
-                                           "n_channel_values": info}
+                emit(f"  INFO  [{slide}] pixel diff: NOT identical")
+                emit(f"        mean |diff| over all      = {st['mean_abs_diff']:.6f}")
+                emit(f"        channel values differing  = {st['n_differing']} "
+                     f"({100.0 * st['frac_differing']:.2f}%)")
+                emit(f"        mean |diff| where differing = "
+                     f"{st['mean_over_differing']:.3f}")
+                emit(f"        max |diff|                = {st['max_abs_diff']}")
+                emit("        PNG is lossless, so a non-zero difference means the")
+                emit("        SOURCE pixels differ, not the encoder. If most values")
+                emit("        differ slightly, this is a DIFFERENT DOWNSAMPLING")
+                emit("        ROUTE, and the patch-count mismatch below follows from")
+                emit("        it rather than from any change to the code.")
         except (OSError, ValueError) as exc:
             emit(f"  INFO  [{slide}] pixel diff not computed ({exc})")
 
@@ -607,9 +658,15 @@ emit("=" * 72)
 if n_fail:
     emit(f"RESULT: FAIL — {n_fail} assertion(s) failed.")
     emit("")
-    emit("Conversion or extraction geometry changed. The pixel-difference")
-    emit("diagnostic above is NOT the failure; look at the dimension and")
-    emit("patch-count assertions.")
+    emit("Read in this order:")
+    emit("  1. Dimension assertions. If those fail, the resolution is wrong and")
+    emit("     nothing below means anything.")
+    emit("  2. The pixel diagnostic. PNG is lossless, so 'not identical' means")
+    emit("     the conversion route differs from the one that made the reference.")
+    emit("  3. Patch count. A sub-5% difference alongside a non-identical pixel")
+    emit("     diagnostic is a consequence of 2, not evidence that the code")
+    emit("     regressed. A large difference, or any difference when the pixels")
+    emit("     ARE identical, is a genuine geometry or filter change.")
 elif n_skip:
     emit(f"RESULT: INCOMPLETE — 0 failures, {n_skip} assertion(s) not evaluated.")
     emit("This is not a pass. Resolve the missing inputs above.")
