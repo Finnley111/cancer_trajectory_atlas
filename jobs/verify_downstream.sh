@@ -72,6 +72,9 @@
 # READS (READ-ONLY): $SCRATCH/results/verify_regression/<TAG>
 #                    $SCRATCH/results/per_section_v2  (cellularity baseline only)
 #                    $SCRATCH/data/holeyness/raw/combined_matched_measurements.txt
+#                      (2M-1 only)
+#                    $SCRATCH/data/holeyness/2M-2_converted/*.tsv
+#                      (2M-2 only, GENERATED from GeoJSON, see below)
 #                    $SCRATCH/data/MCF7_x5_cropped/slide_dimensions.json
 #                    data/annotations_ratio
 # WRITES (NEW ONLY): $SCRATCH/results/verify_regression/<TAG>/downstream/
@@ -94,7 +97,25 @@ mkdir -p logs
 
 REPO="$HOME/cancer_trajectory_atlas"
 V2_BASE="$SCRATCH/results/per_section_v2"
-EXPORT_FILE="$SCRATCH/data/holeyness/raw/combined_matched_measurements.txt"
+# THE TWO SECTIONS USE DIFFERENT MEASUREMENT EXPORTS. This is not a quirk to
+# tidy away; they are genuinely different files with different provenance.
+#
+#   2M-1  QuPath text export covering the 2M-1 slides (and the timepoint
+#         cohort, which parse_measurement_export filters out by slide list).
+#
+#   2M-2  TSV converted from $REPO/holeyness_section_2 GeoJSON by
+#         analysis/holeyness_geojson_export, with a HEADER RENAME:
+#         'holes_pfa:' -> 'holes_carnoys:', because holeyness.py hardcodes the
+#         carnoys prefix. Values are untouched and the true source keys are
+#         recorded in the .provenance.json sidecar.
+#
+#         WARNING: that filename misstates the fixative. 2M-2 is PFA-fixed.
+#         Do not read the column name as evidence about fixation.
+#
+# Pointing 2M-1's export at the 2M-2 run gives ZERO matching measurement rows,
+# then a KeyError on the empty duct table. That is what job 1648821 hit.
+EXPORT_2M1="$SCRATCH/data/holeyness/raw/combined_matched_measurements.txt"
+EXPORT_2M2="$SCRATCH/data/holeyness/2M-2_converted/2M-2_measurements_COLUMN_RENAMED_holes_pfa_to_holes_carnoys.tsv"
 ANN_DIR="$REPO/data/annotations_ratio"
 SLIDE_DIMS="$SCRATCH/data/MCF7_x5_cropped/slide_dimensions.json"
 CACHE_DIR="$SCRATCH/data/features_cache"
@@ -136,10 +157,19 @@ esac
 echo ""
 echo "=== Pre-run checks ==="
 MISSING=0
-for P in "$EXPORT_FILE" "$SLIDE_DIMS"; do
+for P in "$EXPORT_2M1" "$EXPORT_2M2" "$SLIDE_DIMS"; do
     echo -n "  $P : "
     if [ -e "$P" ]; then echo "ok"; else echo "NOT FOUND"; MISSING=1; fi
 done
+
+if [ ! -e "$EXPORT_2M2" ]; then
+    echo ""
+    echo "  The 2M-2 export is GENERATED, not raw. Build it with:"
+    echo "    python -m cancer_trajectory_atlas.analysis.holeyness_geojson_export \\"
+    echo "        --geojson-dir $REPO/holeyness_section_2 \\"
+    echo "        --output      $EXPORT_2M2"
+    echo "  (jobs/run_holeyness_2M2_phase1.sh does this conditionally.)"
+fi
 for D in "$ANN_DIR" "$REPO/jobs"; do
     echo -n "  $D : "
     if [ -d "$D" ]; then echo "ok"; else echo "NOT FOUND"; MISSING=1; fi
@@ -150,6 +180,39 @@ for S in 2M-1 2M-2; do
 done
 [ "$MISSING" -eq 0 ] || {
     echo "ERROR: missing inputs. Nothing was run."
+    exit 2
+}
+
+# Coverage pre-check. An export that exists but covers the wrong slides is the
+# failure mode that cost a full run: 2M-1's export parses fine, matches nothing
+# for 2M-2, and only surfaces as a KeyError once the empty duct table reaches a
+# column lookup. Verify each export names at least one of its section's slides
+# before running anything.
+echo ""
+echo "=== Export coverage pre-check ==="
+COVERAGE_BAD=0
+for SECTION in 2M-1 2M-2; do
+    if [ "$SECTION" = "2M-1" ]; then
+        E="$EXPORT_2M1"; L="$REPO/jobs/slides_section1.txt"
+    else
+        E="$EXPORT_2M2"; L="$REPO/jobs/slides_section2.txt"
+    fi
+    FOUND=0
+    while read -r SLIDE; do
+        [ -z "$SLIDE" ] && continue
+        if grep -q -- "$SLIDE" "$E" 2>/dev/null; then FOUND=$((FOUND + 1)); fi
+    done < "$L"
+    TOTAL=$(grep -c . "$L")
+    echo "  $SECTION: $FOUND/$TOTAL slides present in $(basename "$E")"
+    if [ "$FOUND" -eq 0 ]; then
+        echo "    ERROR: this export contains NONE of section $SECTION's slides."
+        echo "    Running it would produce an empty duct table and a KeyError."
+        COVERAGE_BAD=1
+    fi
+done
+[ "$COVERAGE_BAD" -eq 0 ] || {
+    echo ""
+    echo "ERROR: export/section mismatch. Nothing was run."
     exit 2
 }
 
@@ -177,8 +240,10 @@ for SECTION in 2M-1 2M-2; do
     echo "=== [1/4] Holeyness v1 — section $SECTION ==="
     if [ "$SECTION" = "2M-1" ]; then
         SLIDE_LIST="$REPO/jobs/slides_section1.txt"
+        EXPORT_FILE="$EXPORT_2M1"
     else
         SLIDE_LIST="$REPO/jobs/slides_section2.txt"
+        EXPORT_FILE="$EXPORT_2M2"
     fi
 
     python -m cancer_trajectory_atlas.analysis.holeyness \
@@ -198,8 +263,10 @@ for SECTION in 2M-1 2M-2; do
     echo "=== [2/4] Holeyness v2 (area-adjusted) — section $SECTION ==="
     if [ "$SECTION" = "2M-1" ]; then
         SLIDE_LIST="$REPO/jobs/slides_section1.txt"
+        EXPORT_FILE="$EXPORT_2M1"
     else
         SLIDE_LIST="$REPO/jobs/slides_section2.txt"
+        EXPORT_FILE="$EXPORT_2M2"
     fi
 
     python -m cancer_trajectory_atlas.analysis.holeyness \

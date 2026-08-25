@@ -71,7 +71,8 @@
 #
 # Usage:
 #   sbatch ~/cancer_trajectory_atlas/jobs/verify_conversion_smoke.sh
-#   sbatch --export=ALL,NDPI_DIR=$SCRATCH/data/ndpi ~/.../verify_conversion_smoke.sh
+#   sbatch --export=ALL,SMOKE_TAG=mytag ~/.../verify_conversion_smoke.sh
+#     (the defaults are the measured-correct ones; no overrides needed)
 #   sbatch --export=ALL,SMOKE_SLIDES="6027-4L-2M-1 6027-4L-2M-2" ~/.../verify_conversion_smoke.sh
 #
 #   NDPI_DIR, SMOKE_SLIDES and SMOKE_TAG are all overridable from the command
@@ -104,19 +105,23 @@ ANN_DIR="$HOME/cancer_trajectory_atlas/data/annotations_ratio"
 # One slide per section, so both fixations are exercised.
 SMOKE_SLIDES="${SMOKE_SLIDES:-6027-4L-2M-1 6027-4L-2M-2}"
 
-# Conversion resolution. Defaults match jobs/convert_ndpi.sh.
+# Conversion resolution. MEASURED, not inherited.
 #
-# WARNING: on 2026-08-24 these defaults were shown NOT to reproduce the existing
-# $SCRATCH/data/MCF7_x5_cropped. Converting at level 0 / scale 1.0 gave exactly
-# TWICE the linear resolution recorded in slide_dimensions.json, hence 4x the
-# patch count (616 -> 2506 and 1228 -> 4959, both ratios 4.0). Whatever produced
-# the reference PNGs used half this resolution.
+# These defaults reproduce $SCRATCH/data/MCF7_x5_cropped BIT-IDENTICALLY, verified
+# by job 1648162 on 2026-08-25: every channel value equal on both test slides,
+# and patch counts matching the feature cache exactly (616 and 1228).
 #
-# Override once you know which route reproduces it:
-#   NDPI_LEVEL=1      native pyramid level 1
-#   NDPI_SCALE=0.5    level 0, LANCZOS downsample
+# Do NOT copy these from jobs/convert_ndpi.sh, which is wrong twice over: it
+# points at a non-existent NDPI directory AND uses --ndpi-scale 1.0, which
+# yields twice the linear resolution and roughly 4x the patch count.
+#
+# --ndpi-level 1 was tested and REJECTED (job 1647619). It gives identical
+# DIMENSIONS, since level 1 is a factor-2 downsample, but different PIXELS:
+# mean |diff| ~1.7-2.0, and 617/1252 patches against the cached 616/1228.
+#
+# Override only if verifying a differently-converted cohort.
 NDPI_LEVEL="${NDPI_LEVEL:-0}"
-NDPI_SCALE="${NDPI_SCALE:-1.0}"
+NDPI_SCALE="${NDPI_SCALE:-0.5}"
 
 SMOKE_TAG="${SMOKE_TAG:-$(date +%Y%m%d_%H%M%S)}"
 SMOKE_BASE="$SCRATCH/verify_conversion_smoke/$SMOKE_TAG"

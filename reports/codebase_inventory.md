@@ -229,9 +229,42 @@ downsample.
 - The "x5" in the directory name is therefore meaningful after all, not vestigial
   labelling.
 
-**Still open:** which of `--ndpi-level 1` or `--ndpi-scale 0.5` was used. Determine it by
-converting one slide each way and comparing the mean per-pixel difference against the
-existing PNG; the correct route will be near-identical, the other visibly different.
+**RESOLVED 2026-08-25 by measurement.** The recipe is:
+
+```
+python -m cancer_trajectory_atlas.run_all --convert \
+    --ndpi-dir   $SCRATCH/data/ndpi \
+    --png-dir    <output> \
+    --ndpi-level 0 \
+    --ndpi-scale 0.5
+```
+
+`jobs/verify_conversion_smoke.sh` (job 1648162) converted 6027-4L-2M-1 and 6027-4L-2M-2
+this way and reproduced the existing PNGs **bit-identically**: every one of
+1,520,640,000 and 1,589,575,680 channel values equal, and patch counts matching the
+feature cache exactly at 616 and 1228. PNG is lossless, so bit-identity is proof of the
+route, not evidence consistent with it.
+
+`--ndpi-level 1` was tested first (job 1647619) and REJECTED. It gives the same
+dimensions, because level 1 of these Hamamatsu pyramids is a factor-2 downsample, but
+different pixels: mean |difference| 1.708 and 1.972, and patch counts of 617 and 1252
+against the cached 616 and 1228. The scanner's own pyramid level and a LANCZOS resize of
+level 0 are not the same image, and the ~2% of borderline patches that sit near the
+`white_frac` and `tissue_threshold` boundaries flip between them.
+
+**Two things in `jobs/convert_ndpi.sh` are therefore wrong**, and it would not regenerate
+this cohort if submitted today:
+
+| | it says | it should say |
+|---|---|---|
+| NDPI source | `$SCRATCH/data/MCF7_x5` (does not exist) | `$SCRATCH/data/ndpi` |
+| resolution | `--ndpi-level 0 --ndpi-scale 1.0` | `--ndpi-level 0 --ndpi-scale 0.5` |
+
+The stale path was already recorded in `docs/PIPELINE_HANDOFF.md`; the resolution error
+was not known until this measurement. **Left unfixed**, because editing that script is a
+behaviour change to an existing entry point rather than documentation, and it is a
+decision for the maintainer. Anyone regenerating the cohort should use the recipe above,
+not that script.
 
 ### 3.2 Additional parameters worth recording
 
