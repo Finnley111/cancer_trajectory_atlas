@@ -93,6 +93,12 @@
 
 set -euo pipefail
 
+# Revision of THIS FILE. Printed in the banner below so a job log says which
+# version ran. These scripts are edited off-cluster; if the banner does not
+# match the revision you expect, the copy on the cluster is stale and the
+# fix you are looking for is not in it. Bump on every change.
+SCRIPT_REV="2026-08-25b"
+
 mkdir -p logs
 
 REPO="$HOME/cancer_trajectory_atlas"
@@ -135,6 +141,7 @@ DOWN="$NEW_BASE/downstream"
 
 echo "============================================================"
 echo "  TIER 3 — downstream analysis reproduction"
+echo "  Script rev: $SCRIPT_REV"
 echo "  Job ID    : ${SLURM_JOB_ID:-local}"
 echo "  Candidate : $NEW_BASE"
 echo "  Output    : $DOWN   (NEW)"

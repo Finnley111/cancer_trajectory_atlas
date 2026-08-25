@@ -87,6 +87,12 @@
 
 set -euo pipefail
 
+# Revision of THIS FILE. Printed in the banner below so a job log says which
+# version ran. These scripts are edited off-cluster; if the banner does not
+# match the revision you expect, the copy on the cluster is stale and the
+# fix you are looking for is not in it. Bump on every change.
+SCRIPT_REV="2026-08-25b"
+
 mkdir -p logs
 
 # NDPI source. paths.json's "raw_ndpi" is authoritative and says
@@ -130,6 +136,7 @@ SMOKE_PNG="$SMOKE_BASE/png"
 
 echo "============================================================"
 echo "  TIER 2 — conversion + extraction smoke test (CPU-only)"
+echo "  Script rev: $SCRIPT_REV"
 echo "  Job ID   : ${SLURM_JOB_ID:-local}"
 echo "  Slides   : $SMOKE_SLIDES"
 echo "  Output   : $SMOKE_BASE   (NEW)"

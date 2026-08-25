@@ -78,6 +78,12 @@
 
 set -euo pipefail
 
+# Revision of THIS FILE. Printed in the banner below so a job log says which
+# version ran. These scripts are edited off-cluster; if the banner does not
+# match the revision you expect, the copy on the cluster is stale and the
+# fix you are looking for is not in it. Bump on every change.
+SCRIPT_REV="2026-08-25a"
+
 mkdir -p logs
 
 V2_BASE="$SCRATCH/results/per_section_v2"
@@ -95,6 +101,7 @@ NEW_BASE="$SCRATCH/results/verify_regression/$VERIFY_TAG"
 
 echo "============================================================"
 echo "  TIER 1 GATE — bit-identity assertion"
+echo "  Script rev: $SCRIPT_REV"
 echo "  Job ID    : ${SLURM_JOB_ID:-local}"
 echo "  Reference : $V2_BASE"
 echo "  Candidate : $NEW_BASE"
