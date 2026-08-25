@@ -18,7 +18,8 @@
 #   holeyness v1  rho(pt, hole_pct)          2M-1 +0.2763   2M-2 +0.1906
 #   holeyness v2  partial rho(pt,hole|area)  2M-1 +0.1315   2M-2 +0.2379
 #   paired section comparison                 rho(pt,hole) diff +0.0392, p 0.578
-#                                             rho(area,pt) diff +0.5236, p <= 0.0078
+#                                             rho(area,pt) diff +0.5236, p at the
+#                                             2/2**8 = 0.0078125 floor
 #   cellularity confound                      verdicts, compared to per_section_v2
 #
 #   Source for every recorded value: docs/ANCHOR_VALIDATION_RECORD.md
@@ -97,7 +98,7 @@ set -euo pipefail
 # version ran. These scripts are edited off-cluster; if the banner does not
 # match the revision you expect, the copy on the cluster is stale and the
 # fix you are looking for is not in it. Bump on every change.
-SCRIPT_REV="2026-08-25c"
+SCRIPT_REV="2026-08-25d"
 
 mkdir -p logs
 
@@ -426,6 +427,19 @@ TOL = 1e-4
 RECORDED_V1 = {"2M-1": 0.2763, "2M-2": 0.1906}
 RECORDED_PARTIAL_AREA = {"2M-1": 0.1315, "2M-2": 0.2379}
 
+# Exact p-value floor of the paired test, DERIVED rather than transcribed.
+#
+# With 8 matched glands the sign-flip null has 2**8 = 256 permutations, and the
+# smallest attainable two-sided p is 2/256: the observed sign vector and its
+# mirror. That is 0.0078125.
+#
+# The docs quote it rounded to 4 dp as "0.0078". Using that rounded value as the
+# bound rejects the exact result, because 0.0078125 > 0.0078. That is what job
+# 1651303 hit: a value that reproduced perfectly, failed by 1.25e-5. Compute it,
+# do not transcribe it.
+N_GLANDS = 8
+PAIRED_P_FLOOR = 2.0 / (2 ** N_GLANDS)
+
 n_fail = 0
 n_skip = 0
 lines = []
@@ -550,21 +564,27 @@ else:
     if got is None:
         skip("paired raw_rho_pt_hole p-value", why)
     elif abs(got - 0.578) <= 1e-3:
-        ok("paired raw_rho_pt_hole p-value", f"{got:.4f}")
+        # Recorded to 3 dp as 0.578; the exact value is a multiple of 1/256.
+        ok("paired raw_rho_pt_hole p-value", f"{got:.7f} (recorded 0.578)")
     else:
-        fail("paired raw_rho_pt_hole p-value", "0.578", f"{got:.4f}")
+        fail("paired raw_rho_pt_hole p-value", "0.578 +/- 0.001", f"{got:.7f}")
 
-    # rho(area, pt) sits at the design floor, 2/256 = 0.0078. Asserted as an
-    # inequality because the floor is the smallest value the test can return.
+    # rho(area, pt) sits at the design floor. Asserted as an inequality because
+    # the floor is the smallest value the test can return, and printed at 7 dp
+    # so a near-boundary comparison is legible rather than rounding to look
+    # identical to the threshold.
     got, why = dig(data, "paired", "rho_area_pseudotime", "test", "exact_p_two_sided")
     if got is None:
         skip("paired rho_area_pseudotime p-value", why)
-    elif got <= 0.0078 + 1e-9:
-        ok("paired rho_area_pseudotime p-value", f"{got:.4f} (at or below the floor)")
+    elif got <= PAIRED_P_FLOOR + 1e-12:
+        ok("paired rho_area_pseudotime p-value",
+           f"{got:.7f} (at the {N_GLANDS}-pair floor {PAIRED_P_FLOOR:.7f})")
     else:
-        fail("paired rho_area_pseudotime p-value", "<= 0.0078", f"{got:.4f}",
-             "At n=8 the paired test is a sign test; 8/8 sign agreement gives "
-             "exactly 0.0078. A larger p means the signs no longer all agree.")
+        fail("paired rho_area_pseudotime p-value",
+             f"<= {PAIRED_P_FLOOR:.7f} (2/2**{N_GLANDS})", f"{got:.7f}",
+             f"At n={N_GLANDS} the paired test is a sign test, and {N_GLANDS}/"
+             f"{N_GLANDS} sign agreement gives exactly {PAIRED_P_FLOOR:.7f}. A "
+             "larger p means the signs no longer all agree.")
 
 # ── cellularity confound, candidate vs per_section_v2 ────────────────────────
 emit("")
