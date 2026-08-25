@@ -200,52 +200,123 @@ export PYTHONUNBUFFERED=1
 cd ~
 
 # ── Convert, with the same flags as jobs/convert_ndpi.sh ─────────────────────
-# Resolution pre-check. Compares the recorded slide_dimensions.json against the
-# hardcoded level-0 dimensions in data/slide_registry.py. If they disagree, the
-# reference PNGs were not produced at level 0 / scale 1.0, and converting at
-# those settings cannot reproduce them. Fails in seconds instead of after a
-# 40-minute conversion followed by four confusing assertion failures.
+# Resolution pre-check. Asks openslide what each pyramid level measures,
+# reproduces run_all's dimension arithmetic for the requested (level, scale),
+# and compares that against the recorded slide_dimensions.json. On a mismatch it
+# searches the other levels and names one that WOULD reproduce the reference,
+# so the level-1-versus-scale-0.5 question is settled by measurement.
+#
+# Costs a header read per slide. Fails in seconds rather than after a 40-minute
+# conversion followed by four confusing assertion failures.
 echo ""
 echo "=== Resolution pre-check ==="
 set +e
-python - "$DIMS_JSON" "$NDPI_LEVEL" "$NDPI_SCALE" $SMOKE_SLIDES <<'PRECHK'
+python - "$DIMS_JSON" "$SMOKE_NDPI" "$NDPI_LEVEL" "$NDPI_SCALE" $SMOKE_SLIDES <<'PRECHK'
 import json
 import sys
 
-from cancer_trajectory_atlas.data.slide_registry import KNOWN_NDPI_DIMENSIONS
+dims_path, ndpi_dir = sys.argv[1], sys.argv[2]
+level, scale = int(sys.argv[3]), float(sys.argv[4])
+slides = sys.argv[5:]
 
-dims_path, level, scale = sys.argv[1], sys.argv[2], sys.argv[3]
-slides = sys.argv[4:]
+try:
+    import openslide
+except ImportError:
+    print("  openslide-python not importable; cannot inspect the NDPI pyramid.")
+    print("  Skipping the pre-check rather than guessing. The assertions after")
+    print("  conversion remain the real test.")
+    sys.exit(0)
+
 recorded = json.load(open(dims_path))
 
+
+def full_dims_for(level_dims, lvl, scl):
+    """Reproduce run_all's dimension arithmetic exactly (run_all.py:119-120)."""
+    if lvl >= len(level_dims):
+        return None
+    w, h = level_dims[lvl]
+    if scl != 1.0:
+        return int(w * scl), int(h * scl)
+    return w, h
+
+
 mismatch = False
+suggestions = []
+
 for slide in slides:
-    r = recorded.get(slide + "_x5.png")
-    k = KNOWN_NDPI_DIMENSIONS.get(slide)
-    if r is None or k is None:
-        print("  %s: cannot check (recorded=%s, registry=%s)"
-              % (slide, r is not None, k is not None))
+    path = "%s/%s.ndpi" % (ndpi_dir, slide)
+    key = slide + "_x5.png"
+    rec = recorded.get(key)
+    print("  %s" % slide)
+    if rec is None:
+        print("    not in slide_dimensions.json; cannot check")
         continue
-    got, exp = r["original_full_width"], k[0]
-    if got == exp:
-        print("  %s: recorded full width %d == registry level-0 %d  OK" % (slide, got, exp))
-    else:
+
+    try:
+        osr = openslide.OpenSlide(path)
+    except Exception as exc:
+        print("    could not open %s (%s); skipping check" % (path, exc))
+        continue
+
+    level_dims = list(osr.level_dimensions)
+    downs = list(osr.level_downsamples)
+    osr.close()
+
+    print("    openslide pyramid:")
+    for i, ((w, h), d) in enumerate(zip(level_dims, downs)):
+        print("      level %d: %6d x %-6d  (downsample %.2f)" % (i, w, h, d))
+
+    want_w = rec["original_full_width"]
+    want_h = rec["original_full_height"]
+    got = full_dims_for(level_dims, level, scale)
+
+    print("    recorded original_full : %d x %d" % (want_w, want_h))
+    if got is None:
+        print("    requested level %d does not exist in this pyramid" % level)
         mismatch = True
-        print("  %s: recorded full width %d != registry level-0 %d  (factor %.3f)"
-              % (slide, got, exp, exp / got))
+    else:
+        print("    level %d, scale %.3f  -> %d x %d" % (level, scale, got[0], got[1]))
+        if got == (want_w, want_h):
+            print("    MATCH")
+            continue
+        mismatch = True
+
+    # Search for a (level, scale) that does reproduce the recorded dimensions.
+    found = []
+    for lvl in range(len(level_dims)):
+        for scl in (1.0, 0.5, 0.25):
+            cand = full_dims_for(level_dims, lvl, scl)
+            if cand == (want_w, want_h):
+                found.append((lvl, scl))
+    if found:
+        print("    WOULD MATCH at: " + ", ".join(
+            "--ndpi-level %d --ndpi-scale %g" % (l, sc) for l, sc in found))
+        suggestions.extend(found)
+    else:
+        print("    NO (level, scale) in {0..%d} x {1.0, 0.5, 0.25} reproduces it."
+              % (len(level_dims) - 1))
+        print("    The reference PNGs may have been produced by a route this")
+        print("    pipeline no longer contains. Tier 2 cannot verify them.")
 
 if mismatch:
     print("")
-    print("  The reference PNGs were NOT converted at level 0 / scale 1.0.")
-    print("  This job is set to --ndpi-level %s --ndpi-scale %s, which would" % (level, scale))
-    print("  produce a different resolution and fail the dimension and")
-    print("  patch-count assertions for that reason alone, not because anything")
-    print("  in the code regressed.")
-    print("")
-    print("  Re-submit with settings matching the reference, e.g.:")
-    print("    sbatch --export=ALL,NDPI_LEVEL=1   jobs/verify_conversion_smoke.sh")
-    print("    sbatch --export=ALL,NDPI_SCALE=0.5 jobs/verify_conversion_smoke.sh")
+    print("  The requested resolution does not reproduce the reference PNGs.")
+    if suggestions:
+        uniq = sorted(set(suggestions))
+        l, sc = uniq[0]
+        print("  Re-submit with:")
+        print("    sbatch --export=ALL,NDPI_LEVEL=%d,NDPI_SCALE=%g \\" % (l, sc))
+        print("        ~/cancer_trajectory_atlas/jobs/verify_conversion_smoke.sh")
+        if len(uniq) > 1:
+            print("  (Several candidates give identical dimensions: %s."
+                  % ", ".join("L%d/s%g" % (a, b) for a, b in uniq))
+            print("   They differ in pixel content, not size. Run one, then read")
+            print("   the mean per-pixel difference in the report: the correct")
+            print("   route is near zero, the others visibly larger.)")
     sys.exit(3)
+
+print("")
+print("  Resolution matches the reference. Proceeding to convert.")
 PRECHK
 PRE_RC=$?
 set -e
