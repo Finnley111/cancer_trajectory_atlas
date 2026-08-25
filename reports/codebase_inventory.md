@@ -182,12 +182,12 @@ third-party library default, never set by this codebase.
 | `ndpi_scale` | 1.0 | n/a (`--convert` only) | **0.5** | **MEASURED** | **Corrected 2026-08-25.** This row previously read 1.0, taken from the flag `convert_ndpi.sh` passed. That flag was wrong. Scale **0.5** is what reproduces the reference PNGs bit-identically (job 1648162). The config default of 1.0 is therefore NOT what the cohort used. |
 | `ndpi_level` | 0 | n/a (`--convert` only) | 0 | **MEASURED** | Level 0 confirmed by the same job. Level 1 was tested and rejected: same dimensions, different pixels. |
 | magnification | — | — | — | — | **CORRECTED 2026-08-24, see below.** `--ndpi-level` and `--ndpi-scale` ARE pipeline parameters, and the reference PNGs were NOT produced at level 0 / scale 1.0. |
-| `white_thresh` | not in config | no | 220 | **fn-default** (`features/patching.py:21,230`) | **DEFAULT, not a choice** |
-| `white_frac` | not in config | no | 0.70 | **fn-default** (`patching.py:22,231`) | **DEFAULT, not a choice** |
-| `sat_thresh` (saturation) | not in config | no | 15 | **fn-default** (`patching.py:29,227`) | **DEFAULT, not a choice** |
-| `val_thresh` (value) | not in config | no | 230 | **fn-default** (`patching.py:30,228`) | **DEFAULT, not a choice** |
-| `tissue_threshold` (fraction) | not in config | no | 0.5 | **fn-default** (`patching.py:31,229`) | **DEFAULT, not a choice** |
-| PCA variance target | not in config | no | 0.95 | **fn-default**, hardcoded at the one call site (`run_all.py:508`) | **DEFAULT, not a choice** |
+| `white_thresh` | not in config | no | 220 | **fn-default** (`features/patching.py:19,266`) | **DEFAULT, not a choice** |
+| `white_frac` | not in config | no | 0.70 | **fn-default** (`patching.py:20,267`) | **DEFAULT, not a choice** |
+| `sat_thresh` (saturation) | not in config | no | 15 | **fn-default** (`patching.py:35,263`) | **DEFAULT, not a choice** |
+| `val_thresh` (value) | not in config | no | 230 | **fn-default** (`patching.py:36,264`) | **DEFAULT, not a choice** |
+| `tissue_threshold` (fraction) | not in config | no | 0.5 | **fn-default** (`patching.py:37,265`) | **DEFAULT, not a choice** |
+| PCA variance target | not in config | no | 0.95 | **fn-default**, hardcoded at the one call site (`run_all.py:517`) | **DEFAULT, not a choice** |
 | Leiden k | not in config | no | 15 | **fn-default** (`clustering.py:179`) | **DEFAULT, not a choice** — not plumbed to CLI |
 | Leiden metric | not in config | no | cosine | **fn-default** (`clustering.py:181`) | **DEFAULT, not a choice** |
 | `leiden_resolution` | 0.5 | yes, `--leiden-resolution 0.5` | 0.5 | CLI | **deliberate.** Function default is 1.0 and is never used. |
@@ -197,7 +197,7 @@ third-party library default, never set by this codebase.
 | `n_roots` | 20 | yes, `--n-roots 20` | 20 | CLI | **deliberate** |
 | `cap_strategy` | `"median"` | yes, `--cap-strategy median` | median | CLI | **deliberate** |
 | `stain_method` | `"reinhard"` | yes, `--stain-method none` | **none** | CLI | **deliberate override of the config default** |
-| harmony `nclust` | not in config | no | n/a — Harmony not run | **fn-default** 10 (`harmony.py:51`) | inert in the reference run (`--batch-method none`) |
+| harmony `nclust` | not in config | no | n/a — Harmony not run | **fn-default** 10 (`harmony.py:78`) | inert in the reference run (`--batch-method none`) |
 
 **CORRECTION, 2026-08-24: the magnification row above was wrong.**
 
@@ -268,7 +268,7 @@ its header, and is stamped `SCRIPT_REV=2026-08-25a`. Both directories are overri
 a test conversion need not touch the reference data.
 
 **The fix also removed a live hazard.** `run_all --convert` skips existing PNGs but
-rewrites `slide_dimensions.json` unconditionally (`run_all.py:129-133`). Running the old
+rewrites `slide_dimensions.json` unconditionally (`run_all.py:130-133`). Running the old
 version against `$SCRATCH/data/MCF7_x5_cropped` would have left the images alone while
 silently replacing the sidecar with wrong dimensions, and every ratio-to-pixel annotation
 transform reads that sidecar. The script now warns before rewriting it.
@@ -373,9 +373,9 @@ Identified only. **Nothing merged in this phase.**
 
 | Implementation | Method |
 |---|---|
-| `analysis/holeyness.py:384` `_partial_spearman` | algebraic three-correlation formula |
+| `analysis/holeyness.py:403` `_partial_spearman` | algebraic three-correlation formula |
 | `analysis/cellularity_confound.py:188` `partial_spearman` | algebraic (docstring claims parity with the above) |
-| `analysis/holeyness.py:481` `_partial_spearman_multi` | rank-transform → OLS residualise → Pearson |
+| `analysis/holeyness.py:518` `_partial_spearman_multi` | rank-transform → OLS residualise → Pearson |
 | `analysis/holeyness_v3_significance.py:89` `_partial_rho` | dispatches to the two above |
 
 **Verified numerically** on n=500 with a common confounder: all four agree to
@@ -427,8 +427,8 @@ form, or it will reintroduce that bug.
 
 | Implementation | Rule |
 |---|---|
-| `analysis/holeyness.py:286` `assign_patches_to_ducts` | patch **centre** inside polygon |
-| `analysis/holeyness_roots.py:98` `assign_patches_to_ducts_overlap` | **area overlap** ≥ 25% of the patch |
+| `analysis/holeyness.py:305` `assign_patches_to_ducts` | patch **centre** inside polygon |
+| `analysis/holeyness_roots.py:99` `assign_patches_to_ducts_overlap` | **area overlap** ≥ 25% of the patch |
 
 **Not a duplicate — two different estimands.** The centre rule excludes ~26% of ducts
 (systematically the smallest); the overlap rule exists to recover them. Every published

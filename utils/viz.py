@@ -77,9 +77,14 @@ def plot_cluster_patch_grid(
     WARNING: these are NOT representative patches, despite what this docstring
     said until 2026-08-24 and despite the figure's appearance. The rows are
     ``indices[:n_per_cluster]``, the first patches of each cluster in array
-    order. Array order is extraction order, so a row shows whichever slide was
-    processed first, sampled from its top-left corner. It is a spatially and
-    per-slide biased sample of the cluster, not its centre.
+    order, which is NOT proximity to the centroid.
+
+    What array order actually is: slides in processing order, and within a
+    slide either raster order (uncapped) or a seeded permutation (capped, see
+    ``sample_patches``). Both reference sections had four slides sitting exactly
+    at the cap, so both cases occur in practice. Either way a row is a biased
+    sample of its cluster, skewed toward whichever slides were processed first,
+    and it is not the cluster's centre.
 
     ``get_cluster_centroids`` does compute a nearest-to-centroid index and passes
     it in as ``cluster_centroids[c][1]``, but this function reads only the keys.
@@ -109,9 +114,10 @@ def plot_cluster_patch_grid(
     for row, c in enumerate(clusters):
         mask = cluster_labels == c
         indices = np.where(mask)[0]
-        # First n by array index, which is extraction order, NOT proximity to the
-        # centroid. See the docstring: the previous comment here claimed the
-        # opposite and was wrong.
+        # First n by array index, NOT proximity to the centroid. A previous
+        # comment here claimed the opposite. Array index is slide order, then
+        # raster order within an uncapped slide or a seeded permutation within a
+        # capped one; see the docstring.
         sample = indices[:n_per_cluster]
         for col in range(n_per_cluster):
             ax = axes[row, col]

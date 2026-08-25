@@ -12,9 +12,17 @@ class PipelineConfig:
     Constructed in ``run_all.py`` from parsed CLI arguments, by keyword, and passed
     down unchanged. Nothing mutates it after construction.
 
-    It is never serialised. No artifact in a run directory records the settings that
-    produced that run, so the only provenance is the job script and the SLURM log.
-    Keep the job scripts in ``jobs/`` alongside their results for that reason.
+    It is never serialised as a whole. A few individual settings do reach the
+    output: ``active_cap.txt`` holds the effective cap, ``sampling_manifest.csv``
+    holds ``patch_sample_seed``, and ``adata.uns`` holds ``dpt_root_source`` plus
+    the root set (so ``n_roots`` is recoverable from its length).
+
+    Everything else is unrecorded, including the group that decides what the
+    feature cache contains: ``model``, ``patch_size``, ``stride`` and
+    ``stain_method``. Those are exactly the parameters a cache directory must be
+    consistent in, and nothing in a run directory states which ones it used. The
+    job script and the SLURM log are the only provenance for them, so keep the
+    scripts in ``jobs/`` alongside their results.
 
     Two things to know before editing this class.
 

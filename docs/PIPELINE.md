@@ -47,7 +47,7 @@ permutation tests.
 
 ### 2.1 Three coordinate spaces
 
-Source: `features/patching.py:66-90` (`load_roi_polygons` docstring).
+Source: `features/patching.py:84` (`load_roi_polygons`, coordinate-system docstring immediately below the signature).
 
 | # | Space | Definition |
 |---|---|---|
@@ -59,13 +59,13 @@ Source: `features/patching.py:66-90` (`load_roi_polygons` docstring).
 multiplied by `original_full_width`, landing left-half annotations in
 `[0, original_full_width/2]` — which *equals* `[0, cropped_width]`. That is the same
 space as patch coordinates, so **no further offset is applied**
-(`features/patching.py:83-87`).
+(`features/patching.py:100-107`).
 
 Right-half polygons are discarded. The discard runs only when both `cropped_w` and
 `original_full_width` are supplied, and drops any polygon whose vertex-mean centroid has
 `cx > cropped_w` or `cy > cropped_h`. The y-condition never fires in practice because the
 crop is horizontal only (`cropped_h == original_full_height`), but it is there
-(`patching.py:88-94`).
+(`patching.py:110-114`).
 
 **Consequence, and the failure mode it produces.** Feeding absolute-pixel GeoJSON to a
 function expecting ratio coordinates multiplies every coordinate by
@@ -75,7 +75,7 @@ patches survive. This is exactly why eight first-generation job scripts were arc
 
 ### 2.2 The feature-cache contract
 
-Source: `run_all.py:363-390`, guard at `396-403`.
+Source: `run_all.py:371-403` (the cache-contract comment), guard at `405-411`.
 
 - The cache stores **full, uncapped** features. The cap is applied in Pass 2, after the
   cohort median is known. Sampling before caching would bake one cap into the file.
@@ -152,7 +152,7 @@ See `docs/KNOWN_ISSUES.md` §1.1–1.3.
 
 ## 3. Stage by stage
 
-Phase banners below are the ones the code prints (`run_all.py:278, 290, 505, 553, 656`).
+Phase banners below are the ones the code prints (`run_all.py:286, 298, 514, 562, 665`).
 Parameter values are as invoked by the reference run `jobs/run_per_section_v2.sh:179-195`.
 
 ### Stage 0 — NDPI → cropped PNG (`--convert` only)
@@ -182,7 +182,7 @@ Any x5 reduction happened before these files reached the pipeline.
 **Why the override matters:** with `none`, this stage is a pass-through. Every published
 per-section number was produced without stain normalisation, despite the config default
 saying otherwise. When a method *is* active, `<output_dir>/stain_reference.png` is written
-(`run_all.py:286`) so the reference is recoverable after the fact.
+(`run_all.py:294`) so the reference is recoverable after the fact.
 
 ### Stage 2 — Patch extraction and embedding (PHASE 2)
 
@@ -196,12 +196,12 @@ Two passes. **Pass 1** extracts and caches; **Pass 2** applies the cap and assem
 | `stride` | 96 | CLI (patches overlap by 16 px) |
 | `min_roi_coverage` | `None` → centre-point test only | argparse default |
 
-Tissue filters, applied in order at `patching.py:317, 324`:
+Tissue filters, applied in order at `patching.py:376, 383` (definitions at `patching.py:18` and `patching.py:34`):
 
 | Filter | Threshold | Source |
 |---|---|---|
-| white rejection | `white_thresh=220`, `white_frac=0.70` | **function defaults** (`patching.py:21-22`) |
-| HSV tissue | `sat_thresh=15`, `val_thresh=230`, `tissue_threshold=0.5` | **function defaults** (`patching.py:29-31`) |
+| white rejection | `white_thresh=220`, `white_frac=0.70` | **function defaults** (`patching.py:19-20`) |
+| HSV tissue | `sat_thresh=15`, `val_thresh=230`, `tissue_threshold=0.5` | **function defaults** (`patching.py:35-37`) |
 
 **None of these five values is in `PipelineConfig` or on the CLI.** They are function
 defaults that have never been varied. Reported as fact, not justified.
@@ -209,7 +209,7 @@ defaults that have never been varied. Reported as fact, not justified.
 **Embedding** — `features/extractors.py`. Phikon returns the **CLS token of the last
 hidden state, 768-dim** (`extractors.py:28`). Output `(N, 768)` float32.
 
-**The cap** — `run_all.py:433-435`:
+**The cap** — `run_all.py:454` (written to `active_cap.txt` at `455-456`):
 
 ```python
 active_cap = int(np.median([d["orig_count"] for d in slide_data]))
@@ -225,7 +225,7 @@ logic."
 
 ### Stage 3 — PCA, batch correction, clustering, UMAP (PHASE 3)
 
-**PCA** — `analysis/clustering.py:fit_pca`, called at `run_all.py:508` as
+**PCA** — `analysis/clustering.py:fit_pca`, called at `run_all.py:517` as
 `fit_pca(features, variance_target=0.95)`. The 0.95 is **hardcoded at the single call
 site**, not configurable. sklearn interprets a float `n_components` as "retain this much
 cumulative variance", so the output width is data-determined: **261 components for 2M-1,
@@ -249,16 +249,16 @@ defaults. **Display only** (§5.2).
 `n_comps=10`. The graph is built by `sc.pp.neighbors(adata, n_neighbors=..., use_rep="X")`
 at `diffusion.py:82` — **with no `metric=` argument**, so scanpy supplies `euclidean`.
 
-**PAGA gate** — `compute_paga_topology` (`diffusion.py:380`). Groups by Leiden labels
+**PAGA gate** — `compute_paga_topology` (`diffusion.py:381`). Groups by Leiden labels
 (cosine k=15) but computes connectivity on the diffusion graph (euclidean k=30). So
 "single component → DPT is valid" means precisely: *the euclidean k=30 manifold is
 connected between the cosine k=15 clusters*. It says nothing about cluster separability
-(`diffusion.py:389-398`).
+(`diffusion.py:390-393`).
 
 **Multi-root DPT** — `compute_dpt_multi_root`, `n_roots=20`.
 
 Root rule, stated exactly. The pseudocode below is the docstring's own summary
-(`diffusion.py:219-223`); the implementation it describes is at `diffusion.py:301-316`
+(`diffusion.py:218-224`); the implementation it describes is at `diffusion.py:303-317`
 and was read separately to confirm it matches:
 
 ```
@@ -269,15 +269,15 @@ roots      = finite_idx[argsort(nuclear_density[finite_idx])][:n_roots]
 This is **not** the same as `argsort(nuclear_density)[:20]`; the two agree only when every
 patch has a measured density. Several analysis modules quote the simpler form. Anything
 needing the true root set should read `adata.uns['dpt_root_candidates']` (written at
-`diffusion.py:325`).
+`diffusion.py:326`).
 
 **`n_roots` is silently clamped** to the number of finite-density patches
-(`n_roots = min(n_roots, finite_idx.size)`, `diffusion.py:314`), so the realised root
+(`n_roots = min(n_roots, finite_idx.size)`, `diffusion.py:315`), so the realised root
 count can be lower than the CLI value with no error and no warning. Read
 `len(adata.uns['dpt_root_candidates'])` for the true count rather than assuming the CLI
 value took effect.
 
-Aggregation (`diffusion.py:364-373`): each root runs its own `sc.tl.dpt`; non-finite
+Aggregation (`diffusion.py:364-377`): each root runs its own `sc.tl.dpt`; non-finite
 values are clamped per-root to that root's max finite value; the median across roots
 becomes `pseudotime` after min-max normalisation; the **standard deviation across roots
 becomes `pseudotime_std` and is stored unnormalised** (§5.6).
@@ -289,17 +289,17 @@ becomes `pseudotime_std` and is stored unnormalised** (§5.6).
 | Module | `validation/morphological_features.py`, `validation/correlations.py` |
 | Parameters | `--n-permutations 1000`, `use_stardist=False` (Otsu segmentation) |
 
-Six verdict features (`run_all.py:693-696`): `nuclear_density`, `mean_nuclear_area`,
+Six verdict features (`run_all.py:702-705`): `nuclear_density`, `mean_nuclear_area`,
 `nc_ratio`, `texture_entropy`, `h_intensity`, `packing_irregularity`. A seventh,
 `h_intensity_wholepatch`, is computed and reported but **does not vote**
-(`run_all.py:691-692`).
+(`run_all.py:700-701`).
 
 **This stage runs after Stage 4** — see §5.3.
 
 ### Stage 6 — Outputs and projector
 
 `AtlasProjector.from_training(scaler, pca, umap_reducer, adata, centroids)` at
-`run_all.py:763`. Artifact list in `reports/codebase_inventory.md` §4.
+`run_all.py:772`. Artifact list in `reports/codebase_inventory.md` §4.
 
 ---
 
@@ -357,14 +357,14 @@ questions.
 ### 5.2 UMAP is visualisation only
 
 `X_umap` is passed to `build_adata` and stored in `adata.obsm["X_umap"]`
-(`diffusion.py:38-39`), then used only by `viz.plot_umap_*` (`run_all.py:542-543, 640-641`)
+(`diffusion.py:38-39`), then used only by `viz.plot_umap_*` (`run_all.py:551-552, 649-650`)
 and the interactive overlays. **No clustering, pseudotime, or validation result depends on
 it.** `umap_reducer.pkl` is saved and the projector can transform new points into UMAP
 space for display, but nothing numerical reads it.
 
 ### 5.3 Morphological features are computed post hoc
 
-PHASE 5 (`run_all.py:656`) runs **after** PHASE 4 (`run_all.py:553`). The six descriptors
+PHASE 5 (`run_all.py:665`) runs **after** PHASE 4 (`run_all.py:562`). The six descriptors
 are computed on patch pixels once pseudotime already exists, and **never enter the
 manifold** — the manifold is built from Phikon embeddings alone. This is what makes the
 feature correlations a validation rather than a circularity.
@@ -376,8 +376,8 @@ With one exception, which is §5.4.
 `nuclear_density` occupies three roles simultaneously:
 
 1. **Root selector** — `diffusion.py:219-223` picks the 20 lowest-density patches.
-2. **Validation feature** — it is in `verdict_features` (`run_all.py:694`).
-3. **Confound covariate** — `analysis/cellularity_confound.py:211`
+2. **Validation feature** — it is in `verdict_features` (`run_all.py:702`).
+3. **Confound covariate** — `analysis/cellularity_confound.py:216`
    `analyze_run_nuclear_density` partials it out of the other five.
 
 So the axis is partly *defined* by a quantity it is later validated against, and by the
@@ -409,7 +409,7 @@ adata.obs["pseudotime_std"] = pseudotime_std        # NOT rescaled
 
 `pseudotime` is on `[0, 1]`; `pseudotime_std` is on the **raw diffusion-distance scale**.
 Comparing them directly, or reading std as a fraction of the axis, requires dividing by
-the raw pre-normalisation range — which is printed (`diffusion.py:375`) but **never
+the raw pre-normalisation range — which is printed (`diffusion.py:376`) but **never
 persisted**. Recovering it after the fact means parsing the SLURM log.
 
 **Do not use `pseudotime_std` as an anchor-health check.** It reads dispersion the median

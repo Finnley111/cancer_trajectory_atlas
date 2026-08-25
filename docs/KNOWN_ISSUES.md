@@ -538,7 +538,7 @@ None of these was triggered in any recorded run.
 | `validation/morphological_features.py:114` | StarDist unavailable falls back to Otsu, printing one line. Nothing in the output records which segmenter ran. **StarDist is absent from `requirements.txt`**, so on a clean environment the fallback is the *default* outcome of asking for StarDist. | `--use-stardist` has never been passed |
 | `data/stain_normalization.py:66` | Fewer than 1000 tissue pixels causes statistics to be computed over **all** pixels including glass, silently. A mostly-blank reference would normalise the whole cohort toward background. | `--stain-method none` |
 | `data/stain_normalization.py:205` | A failed `transform` returns the **un-normalised** array with only a stdout warning, so a run can be silently half-normalised. Already documented at the site. | `--stain-method none` |
-| `features/patching.py:470` | `get_patches` swallows every load exception and returns empty arrays, indistinguishable from "loaded fine, nothing survived the filters". | `run_all.py` uses `Image.open` directly and would raise |
+| `features/patching.py:479-480` | `get_patches` swallows every load exception and returns empty arrays, indistinguishable from "loaded fine, nothing survived the filters". | `run_all.py` uses `Image.open` directly and would raise |
 | `features/extractors.py:154` | The ResNet branch scales to [0,1] and stops, skipping the ImageNet channel mean and std normalisation its pretrained weights expect. The features are deterministic and still cluster, which is why it went unnoticed. | every run used Phikon |
 
 ---

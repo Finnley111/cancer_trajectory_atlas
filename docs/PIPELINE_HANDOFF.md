@@ -636,7 +636,8 @@ Returns `{cluster: (centroid_vector, index_of_nearest_patch)}`, skipping the `-1
 > `indices[:n_per_cluster]`, the first patches of each cluster in array order. So the
 > patch-grid figure does **not** show the most representative patch per cluster, despite
 > its title and despite what this document said before 2026-08-24. Array order is
-> extraction order, so each row is a spatially and per-slide biased sample. Corrected in
+> array order, which is slide-processing order then raster or (for capped slides) a
+> seeded permutation within each slide. Each row is therefore a biased sample. Corrected in
 > the function's docstring; the code was left as-is because changing it would alter every
 > cluster grid produced so far.
 
@@ -939,7 +940,7 @@ reference atlas into one directory; `run_all` writes the same files individually
 |---|---|---|
 | `fig1_umap_clusters.png` | `plot_umap_clusters` | Overall structure. Two islands = a batch effect. |
 | `qc_umap_by_slide.png` | `plot_umap_by_slide` | **Batch check.** Slides should intermix, not segregate. |
-| `fig2_cluster_patches.png` | `plot_cluster_patch_grid` | The first N patches of each cluster in extraction order, **not** the nearest to the centroid. Useful for eyeballing a cluster, but not a representative sample. See the note in section 8. |
+| `fig2_cluster_patches.png` | `plot_cluster_patch_grid` | The first N patches of each cluster **in array order**, not the nearest to the centroid. Useful for eyeballing a cluster, but not a representative sample. See the note in section 8. |
 | `fig4_umap_pseudotime.png` | `plot_umap_pseudotime` | Does pseudotime vary smoothly across the manifold? |
 | `fig4b_umap_pseudotime_std.png` | `plot_umap_pseudotime_std` | Where the 20 roots disagree. |
 | `fig5_pt_violins.png` | `plot_pseudotime_violins` | Do clusters occupy distinct pseudotime ranges? |
