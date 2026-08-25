@@ -55,7 +55,7 @@
 #       sacct -X --format=JobID,JobName,Elapsed,MaxRSS,ReqMem,State \
 #             --name=verify_conv_smoke
 #
-# READS (READ-ONLY): $SCRATCH/data/MCF7_x5        (NDPI source)
+# READS (READ-ONLY): $SCRATCH/data/ndpi           (NDPI source, override NDPI_DIR)
 #                    $SCRATCH/data/MCF7_x5_cropped/slide_dimensions.json
 #                    $SCRATCH/data/MCF7_x5_cropped/<slide>.png  (diagnostic only)
 #                    $SCRATCH/data/features_cache/<slide>_features.npy (shape only)
@@ -67,7 +67,11 @@
 #
 # Usage:
 #   sbatch ~/cancer_trajectory_atlas/jobs/verify_conversion_smoke.sh
+#   sbatch --export=ALL,NDPI_DIR=$SCRATCH/data/ndpi ~/.../verify_conversion_smoke.sh
 #   sbatch --export=ALL,SMOKE_SLIDES="6027-4L-2M-1 6027-4L-2M-2" ~/.../verify_conversion_smoke.sh
+#
+#   NDPI_DIR, SMOKE_SLIDES and SMOKE_TAG are all overridable from the command
+#   line. NDPI_DIR is the one worth checking before submitting.
 
 #SBATCH --account=def-lmarti46
 #SBATCH --time=03:00:00
@@ -80,7 +84,15 @@ set -euo pipefail
 
 mkdir -p logs
 
-NDPI_DIR="$SCRATCH/data/MCF7_x5"
+# NDPI source. paths.json's "raw_ndpi" is authoritative and says
+# $SCRATCH/data/ndpi, confirmed on Narval 2026-08-12 with 16 .ndpi present.
+#
+# TRAP: jobs/convert_ndpi.sh hardcodes $SCRATCH/data/MCF7_x5, which DOES NOT
+# EXIST. That script is stale and would fail if submitted today; the staleness
+# is recorded in docs/PIPELINE_HANDOFF.md. This script originally inherited that
+# wrong path from it and failed its own pre-flight check on job 1640510.
+# Match run_full_pipeline_handoff.sh, which resolves it correctly.
+NDPI_DIR="${NDPI_DIR:-$SCRATCH/data/ndpi}"
 PNG_DIR="$SCRATCH/data/MCF7_x5_cropped"
 CACHE_DIR="$SCRATCH/data/features_cache"
 ANN_DIR="$HOME/cancer_trajectory_atlas/data/annotations_ratio"
@@ -116,6 +128,28 @@ for D in "$NDPI_DIR" "$PNG_DIR" "$CACHE_DIR" "$ANN_DIR"; do
     echo -n "  $D : "
     if [ -d "$D" ]; then echo "ok"; else echo "NOT FOUND"; MISSING=1; fi
 done
+
+# The NDPI source is the one input likely to be absent: the raw slides are large
+# and are the obvious thing to have been cleared off scratch after conversion.
+# Say so explicitly rather than leaving a bare NOT FOUND, because this is the
+# only tier that needs them and it cannot be run without them.
+if [ ! -d "$NDPI_DIR" ]; then
+    echo ""
+    echo "  The NDPI source directory is missing. This is the ONLY input Tier 2"
+    echo "  needs that no other tier does, and Tier 2 cannot run without it."
+    echo ""
+    echo "  Look for the raw slides:"
+    echo "    ls -d \$SCRATCH/data/*/ | head -20"
+    echo "    find \$SCRATCH -maxdepth 3 -name '*.ndpi' 2>/dev/null | head"
+    echo ""
+    echo "  Then re-submit with the correct path, for example:"
+    echo "    sbatch --export=ALL,NDPI_DIR=\$SCRATCH/data/ndpi \\"
+    echo "        ~/cancer_trajectory_atlas/jobs/verify_conversion_smoke.sh"
+    echo ""
+    echo "  If the raw NDPIs are gone from scratch, Tier 2 cannot be run at all"
+    echo "  until they are restored from wherever they are archived. That does"
+    echo "  NOT invalidate Tier 1 or Tier 3, which do not touch them."
+fi
 DIMS_JSON="$PNG_DIR/slide_dimensions.json"
 echo -n "  $DIMS_JSON : "
 if [ -f "$DIMS_JSON" ]; then echo "ok"; else echo "NOT FOUND"; MISSING=1; fi
