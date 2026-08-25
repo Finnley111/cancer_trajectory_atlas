@@ -196,6 +196,12 @@ echo "============================================"
 module load StdEnv/2023 python/3.11 gcc opencv openslide openblas hdf5 igraph
 source ~/envs/atlas/bin/activate
 
+# Python block-buffers stdout when it is a file rather than a TTY, so a
+# long run's progress does not reach the log until the buffer flushes.
+# That makes a running job look like a job that died at the last bash
+# echo. Unbuffer so `tail -f` on the SLURM log shows real progress.
+export PYTHONUNBUFFERED=1
+
 export HF_HOME=$SCRATCH/huggingface_cache
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1

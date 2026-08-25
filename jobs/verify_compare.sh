@@ -113,6 +113,12 @@ fi
 module load StdEnv/2023 python/3.11 gcc openblas hdf5 igraph
 source ~/envs/atlas/bin/activate
 
+# Python block-buffers stdout when it is a file rather than a TTY, so a
+# long run's progress does not reach the log until the buffer flushes.
+# That makes a running job look like a job that died at the last bash
+# echo. Unbuffer so `tail -f` on the SLURM log shows real progress.
+export PYTHONUNBUFFERED=1
+
 cd ~
 
 # `set -e` would abort the script the instant python exits non-zero, before the

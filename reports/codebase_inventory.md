@@ -181,7 +181,7 @@ third-party library default, never set by this codebase.
 | `stride` | 96 | yes, `--stride 96` | 96 | CLI | **deliberate** |
 | `ndpi_scale` | 1.0 | n/a (`--convert` only) | 1.0 | cfg-default | conversion used `--ndpi-scale 1.0` explicitly (`jobs/convert_ndpi.sh:26`) |
 | `ndpi_level` | 0 | n/a (`--convert` only) | 0 | cfg-default | `jobs/convert_ndpi.sh:25` passes 0 explicitly |
-| magnification | — | — | — | — | **Not a pipeline parameter.** "x5" appears only in the *directory name* `MCF7_x5_cropped`. Conversion reads NDPI level 0 at scale 1.0; no downsampling is applied by this code. |
+| magnification | — | — | — | — | **CORRECTED 2026-08-24, see below.** `--ndpi-level` and `--ndpi-scale` ARE pipeline parameters, and the reference PNGs were NOT produced at level 0 / scale 1.0. |
 | `white_thresh` | not in config | no | 220 | **fn-default** (`features/patching.py:21,230`) | **DEFAULT, not a choice** |
 | `white_frac` | not in config | no | 0.70 | **fn-default** (`patching.py:22,231`) | **DEFAULT, not a choice** |
 | `sat_thresh` (saturation) | not in config | no | 15 | **fn-default** (`patching.py:29,227`) | **DEFAULT, not a choice** |
@@ -198,6 +198,40 @@ third-party library default, never set by this codebase.
 | `cap_strategy` | `"median"` | yes, `--cap-strategy median` | median | CLI | **deliberate** |
 | `stain_method` | `"reinhard"` | yes, `--stain-method none` | **none** | CLI | **deliberate override of the config default** |
 | harmony `nclust` | not in config | no | n/a — Harmony not run | **fn-default** 10 (`harmony.py:51`) | inert in the reference run (`--batch-method none`) |
+
+**CORRECTION, 2026-08-24: the magnification row above was wrong.**
+
+It stated that conversion reads NDPI level 0 at scale 1.0 and applies no downsampling.
+`jobs/verify_conversion_smoke.sh` disproved this by measurement. Converting
+`6027-4L-2M-1` and `6027-4L-2M-2` at level 0 / scale 1.0 produced **exactly twice** the
+linear resolution recorded in `$SCRATCH/data/MCF7_x5_cropped/slide_dimensions.json`:
+
+| slide | registry level-0 width | recorded `original_full_width` | fresh patches | cached patches | ratio |
+|---|---:|---:|---:|---:|---:|
+| 6027-4L-2M-1 | 96000 | 48000 | 2506 | 616 | 4.07 |
+| 6027-4L-2M-2 | 94080 | 47040 | 4959 | 1228 | 4.04 |
+
+The patch-count ratio of 4.0 is (2x linear)², which is what a 2x resolution difference
+predicts exactly. **The reference cohort was converted at half the level-0 linear
+resolution**, either via `--ndpi-level 1` or `--ndpi-scale 0.5`; the recorded dimensions
+alone cannot distinguish the two, since a Hamamatsu pyramid's level 1 is a factor-2
+downsample.
+
+**Consequences.**
+
+- `jobs/convert_ndpi.sh` does **not** reproduce the dataset the pipeline ran on. Its NDPI
+  path was already known stale (`docs/PIPELINE_HANDOFF.md`); its `--ndpi-level 0
+  --ndpi-scale 1.0` flags are wrong too. Anyone following it would build a cohort at 2x
+  resolution and 4x the patch count, and every absolute number would differ.
+- No recorded result is affected. The existing PNGs, the feature cache and every atlas
+  run are internally consistent; only the *documented recipe for regenerating them* is
+  wrong.
+- The "x5" in the directory name is therefore meaningful after all, not vestigial
+  labelling.
+
+**Still open:** which of `--ndpi-level 1` or `--ndpi-scale 0.5` was used. Determine it by
+converting one slide each way and comparing the mean per-pixel difference against the
+existing PNG; the correct route will be near-identical, the other visibly different.
 
 ### 3.2 Additional parameters worth recording
 

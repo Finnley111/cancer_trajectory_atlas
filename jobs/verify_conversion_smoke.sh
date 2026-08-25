@@ -104,6 +104,20 @@ ANN_DIR="$HOME/cancer_trajectory_atlas/data/annotations_ratio"
 # One slide per section, so both fixations are exercised.
 SMOKE_SLIDES="${SMOKE_SLIDES:-6027-4L-2M-1 6027-4L-2M-2}"
 
+# Conversion resolution. Defaults match jobs/convert_ndpi.sh.
+#
+# WARNING: on 2026-08-24 these defaults were shown NOT to reproduce the existing
+# $SCRATCH/data/MCF7_x5_cropped. Converting at level 0 / scale 1.0 gave exactly
+# TWICE the linear resolution recorded in slide_dimensions.json, hence 4x the
+# patch count (616 -> 2506 and 1228 -> 4959, both ratios 4.0). Whatever produced
+# the reference PNGs used half this resolution.
+#
+# Override once you know which route reproduces it:
+#   NDPI_LEVEL=1      native pyramid level 1
+#   NDPI_SCALE=0.5    level 0, LANCZOS downsample
+NDPI_LEVEL="${NDPI_LEVEL:-0}"
+NDPI_SCALE="${NDPI_SCALE:-1.0}"
+
 SMOKE_TAG="${SMOKE_TAG:-$(date +%Y%m%d_%H%M%S)}"
 SMOKE_BASE="$SCRATCH/verify_conversion_smoke/$SMOKE_TAG"
 SMOKE_NDPI="$SMOKE_BASE/ndpi_subset"
@@ -177,17 +191,78 @@ done
 module load StdEnv/2023 python/3.11 gcc opencv openslide openblas hdf5
 source ~/envs/atlas/bin/activate
 
+# Python block-buffers stdout when it is a file rather than a TTY, so a
+# long run's progress does not reach the log until the buffer flushes.
+# That makes a running job look like a job that died at the last bash
+# echo. Unbuffer so `tail -f` on the SLURM log shows real progress.
+export PYTHONUNBUFFERED=1
+
 cd ~
 
 # ── Convert, with the same flags as jobs/convert_ndpi.sh ─────────────────────
+# Resolution pre-check. Compares the recorded slide_dimensions.json against the
+# hardcoded level-0 dimensions in data/slide_registry.py. If they disagree, the
+# reference PNGs were not produced at level 0 / scale 1.0, and converting at
+# those settings cannot reproduce them. Fails in seconds instead of after a
+# 40-minute conversion followed by four confusing assertion failures.
 echo ""
-echo "=== Converting (--ndpi-level 0 --ndpi-scale 1.0) ==="
+echo "=== Resolution pre-check ==="
+set +e
+python - "$DIMS_JSON" "$NDPI_LEVEL" "$NDPI_SCALE" $SMOKE_SLIDES <<'PRECHK'
+import json
+import sys
+
+from cancer_trajectory_atlas.data.slide_registry import KNOWN_NDPI_DIMENSIONS
+
+dims_path, level, scale = sys.argv[1], sys.argv[2], sys.argv[3]
+slides = sys.argv[4:]
+recorded = json.load(open(dims_path))
+
+mismatch = False
+for slide in slides:
+    r = recorded.get(slide + "_x5.png")
+    k = KNOWN_NDPI_DIMENSIONS.get(slide)
+    if r is None or k is None:
+        print("  %s: cannot check (recorded=%s, registry=%s)"
+              % (slide, r is not None, k is not None))
+        continue
+    got, exp = r["original_full_width"], k[0]
+    if got == exp:
+        print("  %s: recorded full width %d == registry level-0 %d  OK" % (slide, got, exp))
+    else:
+        mismatch = True
+        print("  %s: recorded full width %d != registry level-0 %d  (factor %.3f)"
+              % (slide, got, exp, exp / got))
+
+if mismatch:
+    print("")
+    print("  The reference PNGs were NOT converted at level 0 / scale 1.0.")
+    print("  This job is set to --ndpi-level %s --ndpi-scale %s, which would" % (level, scale))
+    print("  produce a different resolution and fail the dimension and")
+    print("  patch-count assertions for that reason alone, not because anything")
+    print("  in the code regressed.")
+    print("")
+    print("  Re-submit with settings matching the reference, e.g.:")
+    print("    sbatch --export=ALL,NDPI_LEVEL=1   jobs/verify_conversion_smoke.sh")
+    print("    sbatch --export=ALL,NDPI_SCALE=0.5 jobs/verify_conversion_smoke.sh")
+    sys.exit(3)
+PRECHK
+PRE_RC=$?
+set -e
+if [ "$PRE_RC" -eq 3 ]; then
+    echo ""
+    echo "ABORTING before conversion. Only the symlink directory was created."
+    exit 3
+fi
+
+echo ""
+echo "=== Converting (--ndpi-level $NDPI_LEVEL --ndpi-scale $NDPI_SCALE) ==="
 python -m cancer_trajectory_atlas.run_all \
     --convert \
     --ndpi-dir   "$SMOKE_NDPI" \
     --png-dir    "$SMOKE_PNG" \
-    --ndpi-level 0 \
-    --ndpi-scale 1.0
+    --ndpi-level "$NDPI_LEVEL" \
+    --ndpi-scale "$NDPI_SCALE"
 
 echo ""
 echo "=== Assertions ==="
