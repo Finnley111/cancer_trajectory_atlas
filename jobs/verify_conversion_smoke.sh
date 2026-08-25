@@ -46,10 +46,14 @@
 #   Memory is the real constraint and is reasoned, not measured. A level-0 NDPI
 #   here runs to roughly 96000 x 42240 px. The full RGB image is about 12 GB and
 #   the left half about 6 GB, and openslide materialises the full image before
-#   the crop. The pixel-difference diagnostic is computed in ROW STRIPES rather
-#   than by loading two full images, which is what keeps this at one image in
-#   memory instead of two. 128 G is requested for headroom over convert_ndpi's
-#   64 G because this holds a converted image and streams a second.
+#   the crop.
+#
+#   The pixel-difference diagnostic decodes BOTH PNGs (about 6 GB each; PIL's
+#   crop loads the whole image, so striping does not avoid that). Striping keeps
+#   the int16 subtraction from adding two more full-size copies. Rough peak is
+#   the 6 GB patch-extraction array, then about 12 GB for the two decoded PNGs.
+#   128 G is generous for that and deliberately so, since the failure mode of
+#   guessing low here is a dead job hours in.
 #
 #   After the first run:
 #       sacct -X --format=JobID,JobName,Elapsed,MaxRSS,ReqMem,State \
@@ -255,13 +259,16 @@ def skip(label, why):
 
 
 def mean_abs_pixel_diff(path_a, path_b):
-    """Mean |a - b| over all channels, streamed in row stripes.
+    """Mean |a - b| over all channels, accumulated in row stripes.
 
-    Returns (mean_abs_diff, n_pixels_compared) or None when the two images have
-    different shapes, in which case a per-pixel comparison is not defined.
+    Returns (mean_abs_diff, n_channel_values) or (None, shapes) when the two
+    images differ in size, in which case a per-pixel comparison is undefined.
 
-    Streaming rather than loading both images: at level 0 these are multi-GB,
-    and holding two of them at once is what would push this job out of memory.
+    The stripe loop bounds the NUMPY working set, not total memory. PIL's
+    ``crop`` calls ``load`` internally, so both PNGs are fully decoded and
+    resident (roughly 6 GB each at these dimensions). What striping avoids is a
+    third and fourth full-size copy in int16 for the subtraction. Peak is
+    therefore about 2 decoded images plus one stripe pair, not 4 full arrays.
     """
     with Image.open(path_a) as ia, Image.open(path_b) as ib:
         if ia.size != ib.size:
@@ -377,6 +384,19 @@ for slide in SLIDES:
                  "was built WITH ROI filtering, so an unfiltered count would not "
                  "be comparable.")
         else:
+            # Ratio annotations are scaled by the FULL-NDPI width, not the
+            # cropped width. Prefer the sidecar this run just wrote, since that
+            # is what describes the PNG being patched; fall back to the recorded
+            # one. With neither, load_roi_polygons raises ValueError, so check
+            # here and skip with a message rather than dying mid-run.
+            dims_src = fresh.get(png_name) or rec
+            if dims_src is None or dims_src.get("original_full_width") is None:
+                skip(f"[{slide}] patch count vs cache",
+                     "no original_full_width available from either the fresh or "
+                     "the recorded slide_dimensions.json, so ratio annotations "
+                     "cannot be scaled to pixels")
+                continue
+
             from cancer_trajectory_atlas.features.patching import (
                 load_roi_polygons, get_patches_from_array,
             )
@@ -386,8 +406,8 @@ for slide in SLIDES:
             roi_polys, exclude_polys = load_roi_polygons(
                 str(ann_path),
                 coordinate_space="ratio",
-                original_full_width=(rec or {}).get("original_full_width"),
-                original_full_height=(rec or {}).get("original_full_height"),
+                original_full_width=dims_src["original_full_width"],
+                original_full_height=dims_src.get("original_full_height"),
                 cropped_w=img_arr.shape[1],
                 cropped_h=img_arr.shape[0],
             )
