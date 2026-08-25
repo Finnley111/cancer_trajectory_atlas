@@ -97,7 +97,7 @@ set -euo pipefail
 # version ran. These scripts are edited off-cluster; if the banner does not
 # match the revision you expect, the copy on the cluster is stale and the
 # fix you are looking for is not in it. Bump on every change.
-SCRIPT_REV="2026-08-25b"
+SCRIPT_REV="2026-08-25c"
 
 mkdir -p logs
 
@@ -195,6 +195,11 @@ done
 # for 2M-2, and only surfaces as a KeyError once the empty duct table reaches a
 # column lookup. Verify each export names at least one of its section's slides
 # before running anything.
+#
+# Matches on the base stem ("6027-4L-2M-1"), which is what the exports actually
+# contain, as "<stem>.ndpi". The slide lists hold the pipeline form
+# ("<stem>_x5") that holeyness.py derives at parse time. Grepping for the
+# pipeline form finds nothing in either export.
 echo ""
 echo "=== Export coverage pre-check ==="
 COVERAGE_BAD=0
@@ -207,7 +212,12 @@ for SECTION in 2M-1 2M-2; do
     FOUND=0
     while read -r SLIDE; do
         [ -z "$SLIDE" ] && continue
-        if grep -q -- "$SLIDE" "$E" 2>/dev/null; then FOUND=$((FOUND + 1)); fi
+        # Match on the BASE STEM, not the pipeline name. Slide lists hold
+        # "6027-4L-2M-1_x5"; the exports hold "6027-4L-2M-1.ndpi" and
+        # holeyness.py derives the _x5 form at parse time. Stripping the suffix
+        # matches either convention.
+        STEM="${SLIDE%_x5}"
+        if grep -q -F -- "$STEM" "$E" 2>/dev/null; then FOUND=$((FOUND + 1)); fi
     done < "$L"
     TOTAL=$(grep -c . "$L")
     echo "  $SECTION: $FOUND/$TOTAL slides present in $(basename "$E")"
