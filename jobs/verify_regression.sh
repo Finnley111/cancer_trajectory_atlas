@@ -47,10 +47,16 @@
 #                     data/annotations_ratio
 # WRITES (NEW ONLY) : $SCRATCH/results/verify_regression/<TAG>/atlas_2M-{1,2}
 #
-# The two sections share no state. To run them as independent parallel jobs:
-#       sbatch --export=ALL,ONLY_SECTION=2M-1 jobs/verify_regression.sh
-#       sbatch --export=ALL,ONLY_SECTION=2M-2 jobs/verify_regression.sh
-#   Use --export=ALL,... not --export=ONLY_SECTION=..., or $SCRATCH is unset
+# The two sections share no state. To run them as independent parallel jobs,
+# BOTH MUST USE THE SAME VERIFY_TAG so they land in one tree:
+#       sbatch --export=ALL,VERIFY_TAG=mytag,ONLY_SECTION=2M-1 jobs/verify_regression.sh
+#       sbatch --export=ALL,VERIFY_TAG=mytag,ONLY_SECTION=2M-2 jobs/verify_regression.sh
+#
+#   Passing an explicit tag is REQUIRED here. The default is a timestamp, and
+#   two jobs submitted a second apart would get different ones, producing two
+#   half-populated trees that verify_compare.sh would then report as incomplete.
+#
+#   Use --export=ALL,... not --export=VERIFY_TAG=..., or $SCRATCH is unset
 #   inside the job.
 #
 # Usage:
@@ -99,6 +105,16 @@ SLIDES_2M_2=(
 )
 
 if [ -n "${ONLY_SECTION:-}" ]; then
+    # Validated, because the slide-list branch below is `if 2M-1 ... else`, so an
+    # unrecognised value would silently select 2M-2's slides and write them into
+    # a directory named after the typo.
+    case "$ONLY_SECTION" in
+        2M-1|2M-2) ;;
+        *)
+            echo "ERROR: ONLY_SECTION='$ONLY_SECTION' is not a known section."
+            echo "       Valid values: 2M-1, 2M-2. Leave it unset to run both."
+            exit 1;;
+    esac
     SECTIONS=("$ONLY_SECTION")
 else
     SECTIONS=("2M-1" "2M-2")
@@ -124,11 +140,19 @@ if [ -z "${VERIFY_TAG// }" ]; then
     echo "ERROR: VERIFY_TAG is empty. Refusing to run."
     exit 1
 fi
-if [ -d "$VERIFY_BASE" ]; then
-    echo "ERROR: $VERIFY_BASE already exists. Pick a new VERIFY_TAG rather than"
-    echo "       overwriting a previous verification run."
-    exit 1
-fi
+# Collision check is PER SECTION, not on the base directory. The two sections
+# are meant to be runnable as parallel jobs sharing one VERIFY_TAG, so both
+# write into the same base and a base-level check would make the second job
+# abort on the first job's mkdir.
+for SECTION in "${SECTIONS[@]}"; do
+    if [ -d "$VERIFY_BASE/atlas_${SECTION}" ]; then
+        echo "ERROR: $VERIFY_BASE/atlas_${SECTION} already exists."
+        echo "       Refusing to overwrite a previous verification of this section."
+        echo "       Pick a new VERIFY_TAG, or delete that directory if it was a"
+        echo "       failed run you no longer need."
+        exit 1
+    fi
+done
 
 # ── Pre-run checks ───────────────────────────────────────────────────────────
 echo ""
@@ -181,7 +205,8 @@ cd ~
 
 # Record what this verification was run against, so a stale comparison is
 # detectable later. Nothing else in the pipeline writes a provenance file.
-cat > "$VERIFY_BASE/verify_provenance.txt" <<PROV
+PROV_NAME="verify_provenance$( [ -n "${ONLY_SECTION:-}" ] && echo "_${ONLY_SECTION}" ).txt"
+cat > "$VERIFY_BASE/$PROV_NAME" <<PROV
 verify_tag        = $VERIFY_TAG
 slurm_job_id      = ${SLURM_JOB_ID:-local}
 date_utc          = $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -193,7 +218,7 @@ png_dir           = $PNG_DIR
 annotation_dir    = $ANN_DIR
 git_describe      = $(cd ~/cancer_trajectory_atlas 2>/dev/null && git describe --always --dirty 2>/dev/null || echo "unavailable")
 PROV
-echo "  Provenance: $VERIFY_BASE/verify_provenance.txt"
+echo "  Provenance: $VERIFY_BASE/$PROV_NAME"
 
 for SECTION in "${SECTIONS[@]}"; do
     echo ""
