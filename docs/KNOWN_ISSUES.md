@@ -303,6 +303,11 @@ largely **are** slides.
 Added 2026-08-24. **The decision has been made not to fix any of sections 6 to 8.** This ordering
 exists so the next person can pick up any of it without re-deriving the analysis.
 
+**0. Read `mpp_verification.json` from the Stage D conversion (§6.4b).** Two minutes, no
+compute. It settles whether the timepoint cohort was converted at twice the atlas's
+resolution, which would be an independent and *fixable* explanation for the 100%
+extrapolation result. Cheapest item on this list and the one with the most riding on it.
+
 **1. Quantify the projection clamp (§6.4).** Read-only, needs no GPU, changes nothing, and it
 bears on a conclusion already on record. Count how many projected pseudotime values sit at
 *exactly* 0.0 or *exactly* 1.0 in the Stage D timepoint output. That single number converts "the
@@ -447,6 +452,55 @@ boundary, not the fraction the clip had to move.
 
 **Affects reported numbers.** It affects how the Stage D projected pseudotime should be described.
 It does not affect the per-section atlas results, which do not project.
+
+### 6.4b Conversion-scale mismatch between the atlas and the timepoint cohort — HYPOTHESIS
+
+**Found 2026-08-26, while auditing the fallout of the scale-0.5 discovery.**
+
+**What.** The atlas cohort was converted at `--ndpi-scale 0.5` (established
+bit-identically, job 1648162). `jobs/run_timepoint_convert_nocrop.sh` converts the
+timepoint cohort at `--ndpi-scale 1.0`, and its header states that 1.0 is *"the original
+pipeline's actual conversion scale — confirmed against `jobs/convert_ndpi.sh` and
+`pipeline_config.py`'s default, NOT the previously-assumed 0.5"*.
+
+**That confirmation used the broken script as its evidence.** `convert_ndpi.sh` passed
+1.0 and could not regenerate the cohort; `pipeline_config.py`'s default of 1.0 is
+likewise not what production used. A correct assumption of 0.5 was overturned by two
+sources that were both wrong. This is the clearest instance in the repo of the stale
+conversion recipe propagating into a downstream decision.
+
+**Why it might matter scientifically.** If the two cohorts share level-0 MPP, which that
+script's pre-flight check requires before it proceeds, then:
+
+| | 1 PNG pixel | a 112x112 patch covers |
+|---|---|---|
+| atlas (scale 0.5) | 2 level-0 px | 224 x 224 level-0 px |
+| timepoint (scale 1.0) | 1 level-0 px | 112 x 112 level-0 px |
+
+Timepoint patches would show tissue at **twice the magnification**, covering **a quarter
+of the area**, that the atlas was trained on. Phikon embeddings of systematically
+finer-grained tissue would sit off the training manifold.
+
+**That is a candidate mechanism for the Stage D result** that projection was **100%
+extrapolation on all 29 slides**. A whole-cohort scale mismatch would produce exactly
+that signature, and it would do so regardless of biology.
+
+**NOT ESTABLISHED. Recorded as a hypothesis, not a finding.** What would settle it:
+
+1. Read `mpp_verification.json` from the Stage D conversion. If the two cohorts' level-0
+   MPP matched, the 2x mismatch is real. If the timepoint slides were scanned at half the
+   atlas magnification, scale 1.0 was correct and there is no mismatch.
+2. Compare a timepoint PNG's pixel-per-micron against an atlas PNG's.
+
+**Consequence either way.** The timepoint work is already halted as
+staining-confounded (`project_timepoint_cohort`). If this mismatch is real it is a
+*second, independent* reason the projection could not work, and one that is fixable by
+re-converting rather than by more tissue. That distinction matters if the cohort is ever
+revisited.
+
+**Nothing was changed.** `run_timepoint_convert_nocrop.sh` is untouched: it belongs to
+halted work, its scale is chosen dynamically at runtime, and altering it without reading
+`mpp_verification.json` would be guessing.
 
 ### 6.5 `n_roots` is silently clamped, and it has siblings — LATENT
 

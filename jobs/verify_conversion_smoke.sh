@@ -98,11 +98,10 @@ mkdir -p logs
 # NDPI source. paths.json's "raw_ndpi" is authoritative and says
 # $SCRATCH/data/ndpi, confirmed on Narval 2026-08-12 with 16 .ndpi present.
 #
-# TRAP: jobs/convert_ndpi.sh hardcodes $SCRATCH/data/MCF7_x5, which DOES NOT
-# EXIST. That script is stale and would fail if submitted today; the staleness
-# is recorded in docs/PIPELINE_HANDOFF.md. This script originally inherited that
-# wrong path from it and failed its own pre-flight check on job 1640510.
-# Match run_full_pipeline_handoff.sh, which resolves it correctly.
+# HISTORY: jobs/convert_ndpi.sh hardcoded $SCRATCH/data/MCF7_x5, which does not
+# exist. This script inherited that wrong path and failed its own pre-flight
+# check on job 1640510. Both are corrected as of 2026-08-25; the note is kept
+# because the same mistake is easy to reintroduce by copying an old recipe.
 NDPI_DIR="${NDPI_DIR:-$SCRATCH/data/ndpi}"
 PNG_DIR="$SCRATCH/data/MCF7_x5_cropped"
 CACHE_DIR="$SCRATCH/data/features_cache"

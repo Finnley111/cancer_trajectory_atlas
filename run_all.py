@@ -836,7 +836,12 @@ Examples:
     parser.add_argument("--ndpi-level", type=int, default=0,
                         help="NDPI pyramid level (0=full res; default: 0)")
     parser.add_argument("--ndpi-scale", type=float, default=1.0,
-                        help="Additional downscale factor applied after level selection (default: 1.0)")
+                        help="Additional downscale factor applied after level selection "
+                             "(default: 1.0). WARNING: the MCF7 cohort in "
+                             "$SCRATCH/data/MCF7_x5_cropped was converted with 0.5, NOT "
+                             "this default. Converting at 1.0 gives twice the linear "
+                             "resolution and ~4x the patch count, and nothing downstream "
+                             "detects it. Verify with jobs/verify_conversion_smoke.sh.")
 
     # Pipeline settings
     parser.add_argument("--model", type=str, default="phikon", choices=["phikon", "resnet50"],

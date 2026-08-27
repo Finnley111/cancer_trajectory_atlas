@@ -104,8 +104,8 @@ set -euo pipefail
 REPO="${REPO:-$HOME/cancer_trajectory_atlas}"
 # NDPI source. Matches paths.json's "raw_ndpi", which is authoritative and was
 # confirmed correct on Narval 2026-08-12 (16 .ndpi present).
-# NOTE: jobs/convert_ndpi.sh points at $SCRATCH/data/MCF7_x5 instead, which does
-# NOT exist — that script is stale and would fail if submitted today.
+# NOTE: jobs/convert_ndpi.sh pointed at $SCRATCH/data/MCF7_x5, which does not
+# exist, until it was corrected on 2026-08-25. It now matches this script.
 NDPI_DIR="${NDPI_DIR:-$SCRATCH/data/ndpi}"
 RUN_BASE="${RUN_BASE:-$SCRATCH/handoff}"
 RUN_ID="${RUN_ID:-handoff_$(date +%Y%m%d)_${SLURM_JOB_ID:-local}}"
@@ -120,7 +120,18 @@ LEIDEN_RES=0.5
 N_ROOTS=20
 N_PERMUTATIONS=1000
 NDPI_LEVEL=0
-NDPI_SCALE=1.0
+# CORRECTED 2026-08-26. Was 1.0, which is NOT how this cohort was made.
+#
+# jobs/verify_conversion_smoke.sh (job 1648162) reproduced two reference PNGs
+# BIT-IDENTICALLY at level 0 / scale 0.5, and the patch counts matched the
+# feature cache exactly (616 and 1228). At scale 1.0 every slide comes out at
+# twice the linear resolution, so this script would convert all 16 slides
+# wrongly, build a brand new Phikon cache from roughly 4x the patches, and run
+# the whole pipeline on it. Nothing downstream would flag the discrepancy,
+# because every stage would be internally consistent with the wrong input.
+#
+# Verify any conversion with jobs/verify_conversion_smoke.sh before trusting it.
+NDPI_SCALE=0.5
 
 SLIDES_2M_1=(
     6027-4L-2M-1_x5  6027-4R-2M-1_x5

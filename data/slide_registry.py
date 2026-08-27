@@ -5,11 +5,26 @@ a fallback when slide_dimensions.json, written by ``--convert``, is absent. Both
 run_all.py and run_individual.py import from here so the values are never
 duplicated.
 
-These are FULL-NDPI widths, covering both side-by-side copies of the slide. The
-cropped PNG is half this wide. Ratio-space annotations are scaled by the value
-here, not by the cropped width, which is the invariant
-``cropped_width == original_full_width // 2`` that features/patching.py depends
-on.
+These are openslide LEVEL-0 widths, covering both side-by-side copies of the
+slide at full scanner resolution.
+
+TRAP: the cropped PNG is a QUARTER of the width recorded here, not a half. The
+cohort was converted with ``--ndpi-scale 0.5``, so 96000 becomes 48000, and the
+left-half crop then halves it again to 24000. The invariant
+``cropped_width == original_full_width // 2`` still holds, but
+``original_full_width`` there means the SCALED full width (48000), not the
+level-0 width in this table (96000).
+
+That matters because ``_get_known_dimensions`` (``run_all.py:142``) multiplies
+these values by ``cfg.ndpi_scale``. The fallback therefore reproduces the
+recorded ``slide_dimensions.json`` ONLY when ``--ndpi-scale 0.5`` is passed. At
+the config default of 1.0 it returns twice the correct width, every ratio
+annotation is scaled by twice the right number, and every ROI lands off-canvas.
+
+This is latent, not live: ``slide_dimensions.json`` exists in
+``$SCRATCH/data/MCF7_x5_cropped`` and takes precedence, so the fallback has not
+been exercised. It would bite on a fresh namespace where the sidecar is missing
+and the scale is left at its default.
 
 Hardcoding is a fallback, not the source of truth. slide_dimensions.json is
 preferred whenever it exists, because it records what was actually converted. A
