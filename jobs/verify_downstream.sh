@@ -61,8 +61,16 @@
 #   --v1-per-duct-csv) and the paired comparison read. Running the paired
 #   comparison first would find no per-duct tables.
 #
+# LAST RESULT: PASS, job 1652298, 2026-08-27, at this revision, run without LOO.
+#   All 12 assertions reproduced: holeyness v1 rho +0.2763 / +0.1906, v2 partial
+#   given area +0.1315 / +0.2379, paired differences +0.0392 and +0.5236, paired
+#   p-values 0.5781250 and 0.0078125, and all six cellularity verdicts matching
+#   per_section_v2. The second p-value sits exactly at the 8-pair floor 2/256.
+#
 # WALLTIME / MEMORY — NOT MEASURED
-#   No sacct record exists for this script. The only basis is that the holeyness
+#   Job 1652298 completed but its elapsed and MaxRSS were never recorded here,
+#   and it ran WITHOUT the LOO, so it does not bound the with-LOO case. The only
+#   other basis is that the holeyness
 #   and cellularity jobs each request 1000 permutations, and their own scripts
 #   request modest resources. The request below is reasoned, not measured, and
 #   is dominated by the optional LOO. Without LOO this should finish in well

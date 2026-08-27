@@ -1,9 +1,9 @@
 # KNOWN_ISSUES.md — defects and limitations, with scope
 
-**Current as of 2026-08-24.** Each entry states what the issue is, why it matters, how it was
+**Current as of 2026-08-26.** Each entry states what the issue is, why it matters, how it was
 found, **whether it affects a reported number**, and what fixing it would require.
 
-**Sections 5 to 9 were added by the 2026-08-24 correctness audit** and record defects found by
+**Sections 5 to 9 were added by the 2026-08-24 correctness audit and extended on 2026-08-26** and record defects found by
 reading the code rather than by analysing results. Start at **section 5**, which is an ordered
 shortlist; the rest is detail behind it. Every entry there states plainly whether it is **LIVE**
 (a recorded number is affected) or **LATENT** (a real defect that no recorded run triggered).
@@ -21,7 +21,7 @@ about defects that are still live in the code and the design.
 
 ## 1. Statistical mis-specification
 
-### 1.1 The 16 slides are 8 matched pairs — CORRECTED for one analysis, still live for others
+### 1.1 The 16 slides are 8 matched pairs — CORRECTED for the between-section comparison
 
 **What.** Every mouse-flank gland contributes one slide to 2M-1 (Carnoy's) and one to 2M-2
 (PFA). The 16 slides are therefore 8 matched pairs, not 16 independent samples. This was
@@ -38,8 +38,10 @@ per-duct tables (`analysis/gland_pairing_audit.py`) rather than from filenames.
 `analysis/holeyness_paired_comparison.py` and reported side by side with the unpaired version.
 See `ANCHOR_VALIDATION_RECORD.md` §3.11.
 
-**Still live for.** Nothing else on the between-section path, but see 1.2 and 1.3 below, which
-are separate defects surfaced by the same audit.
+**Scope of the correction.** The between-section comparison is corrected and nothing else on
+that path is affected. The heading previously said "still live for others", which contradicted
+this line; the pairing itself is handled. 1.2 and 1.3 below are separate defects that the same
+audit surfaced, not unfixed parts of this one.
 
 **Not affected, and worth stating.** The within-section slide-clustered bootstraps in
 `holeyness_section_comparison.py:224`, `holeyroot_duct_checks.py:192` and
@@ -163,6 +165,36 @@ magnitude.
 
 ---
 
+### 2.5 The "5x magnification" label is wrong by about a factor of two
+
+**What.** `mpp_verification.json` reports level-0 MPP of 0.44130626654898497 um/px,
+identical across all 24 timepoint and all 3 sampled atlas slides. That is about 20x. After
+`--ndpi-scale 0.5` the working PNGs are 0.8826 um/px, about 10x. A genuine 5x is roughly
+2.0 um/px and would need `--ndpi-scale 0.22`.
+
+**Where the wrong label appears.** `ANCHOR_VALIDATION_RECORD.md` §1 and its parameter
+table, `reports/morphological_features_audit.md` (four places), `NOTES.md`,
+`PROJECT_STATE.md`, and the directory name `MCF7_x5_cropped` itself. The manuscript draft
+reportedly says "112 x 112-pixel patches at 5x magnification".
+
+**Why it matters beyond labelling.** Arguments are built on the assumed scale:
+
+- The morph audit reasons that "at 5x, nuclei are approximately 5-15 pixels in diameter".
+  At 0.8826 um/px a 7 um nucleus spans about 8 px, which sits inside that range. Someone
+  measured correctly and wrote the wrong magnification beside it.
+- A 112 px patch covers 99 um per side, not the 224 um that 5x implies. Any claim about
+  how much tissue, or how many ducts, a patch spans is off by a factor of two.
+
+**Does it change any computed number?** No. Features are computed in pixels on the actual
+images, and MPP never enters the pipeline. Only the description is wrong, and the
+description is what goes in the manuscript.
+
+**Resolving it.** "x5" appears to be a label applied at conversion time and never checked
+against metadata. `mpp_verification.json` is the authority. Confirm against the scanner's
+stated objective before the manuscript names a magnification.
+
+---
+
 ## 3. Pipeline defects
 
 ### 3.1 Root-selection circularity
@@ -235,11 +267,20 @@ other unenforced conventions in §7.2; the site itself is well commented and nee
 ### 3.6 Defaults that were never chosen
 
 Eleven operative values are library or function defaults rather than deliberate choices — five
-tissue-filter thresholds, the PCA variance target, Leiden k and metric, the diffusion map's
+tissue-filter thresholds, Leiden k and metric, the diffusion map's
 euclidean metric (scanpy's default, no CLI flag), UMAP's parameters, and the PAGA gate's
-`threshold=0.05`. Full table in `reports/codebase_inventory.md` §3. Notably **k=30 for the
-diffusion graph sits below the k≥50 plateau** reported by Vig et al. **That k point is not
-noted at the code site**, though the metric-is-a-default point is; see §9.
+`threshold=0.05`. Full table in `reports/codebase_inventory.md` §3.
+
+**The PCA variance target 0.95 is NOT in that category** and was previously miscounted
+here. It is a function default, but `run_all.py:517` also passes it *explicitly*
+(`fit_pca(features, variance_target=0.95)`), so somebody typed it. It is **hardcoded and
+not CLI-exposed**, which is a different complaint from "a library default nobody looked
+at". The genuine never-chosen cases are the ones where no call site mentions the value at
+all, such as the diffusion map's euclidean metric.
+
+Separately, k=30 for the diffusion graph sits below the k≥50 plateau reported by Vig et
+al. That k point is not noted at the code site, though the metric-is-a-default point is.
+See §9.
 
 ### 3.7 Fixed generic stain matrix across two fixations
 
@@ -281,7 +322,7 @@ n = 21 and n = 11 are far too small, and the ratio coincidence could easily be c
 The paired correction fixes the *unit of analysis*. It does not establish that the two pieces of
 each gland sample comparable tissue. If they sample different regions, within-gland regional
 variation remains mixed with the fixation effect and cannot be separated by any analysis of this
-data. **Outstanding clarification with the pathologist.**
+data.
 
 ### 4.3 Is the compression monotone?
 
@@ -327,6 +368,13 @@ sibling of a bug that already bit this project once. The correct pattern is not 
 **4. Add the site comment for the global shuffle (§6.2).** Already known and already recorded as
 §1.2. It simply is not marked at the code site, so a reader of `permutation_test` has no way to
 learn that the null is mis-specified. Comment only, no behaviour change.
+
+**The LOO leakage (§1.3) is LIVE but deliberately not on this list.** It affects any
+full-atlas 16-slide LOO number, so "everything else can wait" does NOT cover it. It is
+excluded because fixing it means holding out the *gland* rather than the slide, halving
+the fold count from 16 to 8 — a re-analysis, not a repair. The within-section LOO in
+`jobs/run_per_section.sh` is unaffected and is the one to quote. **Decision needed:**
+re-run the cross-section LOO gland-wise, or stop quoting the 16-slide number.
 
 **Everything else can wait.** §6.3 and §6.5 through §6.9 are **latent**: real defects that no
 recorded run triggered. None affects a number in `validation.json`, in either reference section,
@@ -505,31 +553,54 @@ likewise not what production used. A correct assumption of 0.5 was overturned by
 sources that were both wrong. This is the clearest instance in the repo of the stale
 conversion recipe propagating into a downstream decision.
 
-**Why it might matter scientifically.** If the two cohorts share level-0 MPP, which that
-script's pre-flight check requires before it proceeds, then:
+**The mismatch is confirmed, and the numbers are these.** `mpp_verification.json` reports
+identical level-0 MPP for both cohorts, so the two PNG sets do not share a physical scale:
 
-| | 1 PNG pixel | a 112x112 patch covers |
+| | 1 PNG pixel | a 112 px patch spans | area |
+|---|---|---|---|
+| atlas, `--ndpi-scale 0.5` | 0.88261 um | **98.85 um** | 9772 um² |
+| timepoint, `--ndpi-scale 1.0` | 0.44131 um | **49.43 um** | 2443 um² |
+
+Timepoint patches show tissue at twice the magnification, and a quarter of the area, that
+the atlas was trained on.
+
+**This is a sufficient mechanism for the Stage D result** that projection was 100%
+extrapolation on all 29 slides. Patches at twice the magnification embed differently and
+sit off the training manifold whatever the biology.
+
+**IT ALSO BEARS ON THE STAGE F MORPHOLOGY FINDINGS, which were read as evidence that the
+tissue differs.** Stage F reported, for the timepoint cohort against training:
+
+| Stage F observation | what a pure 2x scale change predicts | direction |
 |---|---|---|
-| atlas (scale 0.5) | 2 level-0 px | 224 x 224 level-0 px |
-| timepoint (scale 1.0) | 1 level-0 px | 112 x 112 level-0 px |
+| nuclear density at **45%** of training | ~25% (a patch covers 1/4 the tissue, so ~1/4 the nuclei) | same |
+| mean nuclear area **2.6x** larger | ~4x (a nucleus spans 2x linearly, so ~4x the pixel area) | same |
 
-Timepoint patches would show tissue at **twice the magnification**, covering **a quarter
-of the area**, that the atlas was trained on. Phikon embeddings of systematically
-finer-grained tissue would sit off the training manifold.
+Both move the way a scale artifact predicts, and both are of that order. Neither matches
+the prediction exactly, which is what you would expect: Otsu segmentation is not
+scale-linear. At higher magnification more nuclei resolve as separate objects, and the
+`min_size=20` filter in `remove_small_objects` bites differently. The observed effect
+should be milder than the geometric prediction, and it is.
 
-**That is a candidate mechanism for the Stage D result** that projection was **100%
-extrapolation on all 29 slides**. A whole-cohort scale mismatch would produce exactly
-that signature, and it would do so regardless of biology.
+**Consequence for interpretation.** These numbers cannot be cited as evidence that the
+timepoint tissue is morphologically different, because a scale artifact predicts the same
+signs and roughly the same magnitudes. Separating the two requires re-converting at 0.5
+and re-measuring. **The manuscript's timepoint paragraph must not use the Stage F
+morphology numbers as biological evidence without this caveat.**
 
-**Consequence either way.** The timepoint work is already halted as
-staining-confounded (`project_timepoint_cohort`). If this mismatch is real it is a
-*second, independent* reason the projection could not work, and one that is fixable by
-re-converting rather than by more tissue. That distinction matters if the cohort is ever
-revisited.
+**What is and is not established.** The scale mismatch is confirmed by measurement. That
+it *caused* the Stage D and Stage F results is inference from mechanism, not a controlled
+comparison. The controlled comparison is a re-conversion at 0.5 and a re-run.
 
-**Nothing was changed.** `run_timepoint_convert_nocrop.sh` is untouched: it belongs to
-halted work, its scale is chosen dynamically at runtime, and altering it without reading
-`mpp_verification.json` would be guessing.
+**The halt decision still stands, but its reasoning changes.** The timepoint work was
+halted as staining-confounded, and that remains true and remains unfixable by
+re-converting. What changes is that the projection and morphology evidence cited alongside
+it is no longer independent support: both are consistent with a scale artifact. The halt
+rests on the staining confound alone.
+
+**Nothing was changed in code.** `run_timepoint_convert_nocrop.sh` is untouched. It
+belongs to halted work and picks its scale at runtime; the correct value given
+`ratio = 1.0` is **0.5**, not the 1.0 it currently selects.
 
 ### 6.5 `n_roots` is silently clamped, and it has siblings — LATENT
 
@@ -635,10 +706,9 @@ Not defects in themselves. Each is a rule the code depends on but does not check
 **The widest-blast-radius fragility in the codebase.**
 
 **What.** Both are built from the same arrays in the same order (`run_all.py:728` and
-`build_adata`), so row *i* of one **is** row *i* of the other. But there is **no shared key column
-and no assertion**. `adata.obs` carries `cluster` and `slide_id` and nothing else: **no `x`, no
-`y`, no `slide_name`.** Anything needing coordinates must read `results.csv` and join
-**positionally**.
+`build_adata`), so row *i* of one is row *i* of the other. There is no shared key column and
+no assertion enforcing it. `adata.obs` carries `cluster` and `slide_id` and nothing else, so
+anything needing coordinates must read `results.csv` and **join by position**.
 
 **Sixteen modules read both files.** Only `analysis/anchor_area_control.py` verifies the alignment
 (`_verify_row_alignment`, line 167), and it does so only because this assumption **already crashed

@@ -416,7 +416,15 @@ both variables. Both statements are true simultaneously.
 
 Hole area shrinks **5.48x** while duct area shrinks only **1.64x**. The ratio of those ratios —
 hole-area shrink over duct-area shrink — is **0.261 median, 8/8 glands, exact sign-test
-p = 0.0078**. **Under Carnoy's the lumen collapses to roughly a quarter of what the duct as a
+p = 0.0078**. **Under 
+
+> **On 0.261 vs 0.299.** Dividing the two headline ratios gives 0.182 / 0.609 = 0.299,
+> not 0.261. Both are correct; they measure different things. 0.299 is the **ratio of
+> medians**, formed from the two cohort-level summaries. 0.261 is the **median of
+> per-gland ratios**: compute anisotropy within each gland, then take the median of
+> those eight numbers. The second is the right one for a paired design, because it
+> never compares across glands. Medians do not commute with division, so the two need
+> not agree.Carnoy's the lumen collapses to roughly a quarter of what the duct as a
 whole does.** Epithelium is solid and resists; lumen is fluid-filled and does not. The
 architecture is not scaled down uniformly, it is deformed, with the open space taking almost all
 of the loss.

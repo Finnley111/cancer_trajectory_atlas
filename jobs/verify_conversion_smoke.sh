@@ -38,10 +38,16 @@
 #   comparison here is against the UNCAPPED patch count. Applying a cap would
 #   make this test fail for a reason that is not a defect.
 #
+# LAST RESULT: PASS, job 1648162, 2026-08-25, at this revision.
+#   Both slides bit-identical to the reference PNGs, patch counts 616 and 1228
+#   matching the cache exactly. That run is what established the conversion
+#   recipe as --ndpi-level 0 --ndpi-scale 0.5; see the NDPI_LEVEL note below.
+#
 # WALLTIME / MEMORY — NOT MEASURED
-#   No sacct record exists; this script has never been run. The only related
-#   measurement-free reference is jobs/convert_ndpi.sh, which requests 4 h and
-#   64 G for all 16 slides. This converts 2, so time should be far under that.
+#   Job 1648162 completed but its elapsed and MaxRSS were never recorded here.
+#   Recover them with the sacct line below before trusting the request. The only
+#   other reference is jobs/convert_ndpi.sh, which requests 4 h and 64 G for all
+#   16 slides. This converts 2, so time should be far under that.
 #
 #   Memory is the real constraint and is reasoned, not measured. A level-0 NDPI
 #   here runs to roughly 96000 x 42240 px. The full RGB image is about 12 GB and

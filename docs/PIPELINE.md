@@ -1,13 +1,19 @@
 # PIPELINE.md — what the atlas pipeline actually does
 
-**Written against the code as of 2026-08-22.** Every claim here is traceable to a file
-and line. Where a prior document disagrees with the code, the code wins and the
-discrepancy is called out.
+**Written against the code as of 2026-08-22, corrected through 2026-08-26.** Every claim
+here is traceable to a file and line. Where a prior document disagrees with the code, the
+code wins and the discrepancy is called out in §7.
+
+Two stages carry later corrections than the body date: Stage 0's conversion parameters
+(2026-08-25) and the "x5" note (2026-08-26). Both are marked inline. If you are checking
+whether this document predates a fix you know about, check §7 rather than the header date.
 
 **Relationship to `docs/PIPELINE_HANDOFF.md`:** that document is a longer tutorial-style
 walkthrough written 2026-08-12. This one is a shorter reference written independently
-against the current tree, and it corrects two things that document and the surrounding
-notes get wrong (§7). Where the two disagree, prefer this one and check the cited line.
+against the current tree. §7 lists everything it corrects, in that document and elsewhere,
+including a conversion-scale claim both documents carried. The handoff's own header says
+that where the two disagree, this one carries the line citation. That rule still holds,
+and §7 is the list of what those disagreements were. None are believed open.
 
 ---
 
@@ -127,12 +133,12 @@ See `docs/KNOWN_ISSUES.md` §1.1–1.3.
 
 - Patches carry `slide_name` and `(x, y)` in cropped-PNG space. `slide_ids` indexes into
   a `slide_names` list.
-- **Patch coordinates are not in `adata.obs`.** `obs` accumulates `cluster` and `slide_id`
+- **Patch coordinates are not in `adata.obs`.** It accumulates `cluster` and `slide_id`
   (`diffusion.py:35-36`), `mouse_id` and `section_number` (`run_all.py:572-573`),
   `pseudotime` and `pseudotime_std` (`diffusion.py:372-374`), and the morphological
   features (`run_all.py:672-673`) — but never `x`, `y` or `slide_name`. Those go only to
   `results.csv` (`run_all.py:728-739`), built from the same arrays in the same block, so
-  the two are in identical row order **by construction**.
+  the two are in identical row order by construction.
 - **That row-order invariant is unchecked, and 16 modules depend on it.** There is no
   shared key column and no assertion anywhere. Only `analysis/anchor_area_control.py`
   verifies it (`_verify_row_alignment`, line 167), and only because the assumption
@@ -167,9 +173,21 @@ Parameter values are as invoked by the reference run `jobs/run_per_section_v2.sh
 **Why:** the NDPIs contain two copies of the same slide side by side; annotations were
 drawn on the left, so the right is discarded (`run_all.py:54-55`).
 
-**Note on "x5".** The magnification appears only in the *directory name*
-`MCF7_x5_cropped`. This code reads level 0 at scale 1.0 and applies **no downsampling**.
-Any x5 reduction happened before these files reached the pipeline.
+**Note on "x5" — CORRECTED 2026-08-26.** The previous text here said this code
+"reads level 0 at scale 1.0 and applies no downsampling", contradicting the parameter
+row six lines above. That was wrong and is the second of two places this document
+asserted scale 1.0.
+
+The conversion reads **level 0 at scale 0.5**, so it DOES downsample, by a factor of
+two, before the left-half crop. Established bit-identically by
+`jobs/verify_conversion_smoke.sh` (job 1648162).
+
+**The "x5" in the directory name is not the magnification.** `mpp_verification.json`
+reports level-0 MPP of 0.4413 um/px for these slides, about 20x. After `--ndpi-scale 0.5`
+the PNGs are 0.8826 um/px, about 10x. A genuine 5x would be roughly 2.0 um/px, needing
+`--ndpi-scale 0.22`. See `KNOWN_ISSUES.md` §2.5:
+the "5x" label is used in several places, including the manuscript, and appears to be
+wrong by a factor of two.
 
 ### Stage 1 — Stain normalisation (PHASE 1)
 
@@ -331,13 +349,12 @@ record rather than guessed.
 
 ## 5. Eight non-obvious facts
 
-Each independently verified against source for this document. **Two of the eight, as
-stated in the brief that requested this file, were inaccurate** — see §5.1 and §5.7.
+Each independently verified against source for this document. **Two of the eight were
+stated inaccurately in the brief that requested this file**: the k-NN graph count (§5.1)
+and the projector's use of the pre-correction PCA (§5.7). Both are recorded in §7 with
+the rest of the corrections.
 
-### 5.1 There are THREE k-NN graphs, not two
-
-The brief that requested this document says "TWO distinct kNN graphs". **The code builds
-three** (`analysis/clustering.py:5-17`):
+### 5.1 There are three k-NN graphs, not two
 
 | Consumer | Built by | k | Metric | Set where |
 |---|---|---|---|---|
@@ -483,16 +500,36 @@ dataclass fields and their order defines the positional `__init__` signature.
 
 ## 7. Where this document corrects prior claims
 
-| Source | Claim | Reality |
-|---|---|---|
-| Brief requesting this doc | "TWO distinct kNN graphs" | **Three.** UMAP builds its own (k=30, cosine). §5.1 |
-| Brief requesting this doc | AtlasProjector fits on pre-correction PCA (unconditional) | **Conditional** on a correction having been applied. In the reference run the branches coincide. §5.7 |
-| `PROJECT_STATE.md:79, 391` | `run_train_test.py` exists, imports a broken `config.py` | File does not exist. |
-| `PROJECT_STATE.md:400, 572` | `validation/annotations.py` provides `load_annotations()` | File does not exist. |
-| Various notes | `paths.json` points at `data/annotations` | Points at `data/annotations_ratio`. |
+Everything this document contradicts, including its own earlier version.
 
-`PROJECT_STATE.md` (90 KB, last modified 2026-07-28) predates the 2026-08-12 cleanup and
-should not be used as a reference for tree structure.
+**Corrections to the brief that commissioned this document**
+
+| Claim | Reality | Where |
+|---|---|---|
+| The pipeline builds two k-NN graphs | It builds **three**, with different k and different metrics: Leiden k=15 cosine, UMAP k=30 cosine, diffusion k=30 euclidean. None derives from another. | §5.1 |
+| `AtlasProjector` always fits its KNN on the pre-correction PCA | Conditional, not unconditional. It uses `X_pca_original` only when that key exists, which is only when Harmony or scVI ran. | §5.7 |
+
+**Corrections to the conversion recipe.** The largest set, and the one that reached
+furthest: it propagated into the timepoint cohort's conversion and from there into two
+recorded results. See `KNOWN_ISSUES.md` §6.4b.
+
+| Claim | Reality | Where |
+|---|---|---|
+| Conversion uses `--ndpi-scale 1.0` | **0.5.** Established by reproducing two reference PNGs bit-identically (job 1648162). This document asserted 1.0 in two places until 2026-08-25 and 2026-08-26. | Stage 0, and the "x5" note |
+| `jobs/convert_ndpi.sh` reproduces the cohort | It did not. Wrong NDPI directory and wrong scale; corrected 2026-08-25. | Stage 0 |
+| Patches are at "5x magnification" | Level-0 MPP is 0.4413 um/px, about 20x; the working PNGs are 0.8826 um/px, about 10x. 5x would need about 2.0 um/px. The label is wrong by roughly a factor of two and appears in the manuscript draft. | the "x5" note, `KNOWN_ISSUES.md` §2.5 |
+
+**Corrections to `PROJECT_STATE.md` and surrounding notes**
+
+| Claim | Reality |
+|---|---|
+| `run_train_test.py` exists and imports a broken `config.py` | Neither file exists. |
+| `validation/annotations.py` provides `load_annotations()` | File does not exist. |
+| `paths.json` points at `data/annotations` | Points at `data/annotations_ratio`. |
+| No-normalisation plus Harmony is the canonical configuration | The reference run passes `--batch-method none`. No batch correction at all. |
+
+`PROJECT_STATE.md` predates the 2026-08-12 cleanup and carries a superseded banner. Do
+not use it for tree structure or for the current configuration.
 
 ---
 

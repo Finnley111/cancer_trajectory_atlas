@@ -49,9 +49,13 @@
 #   the same threshold=0.05 that analysis/diffusion.py:compute_paga_topology
 #   applies. That threshold has never been exposed to the CLI.
 #
+# LAST RESULT: PASS, job 1651931, 2026-08-26, at this revision.
+#   34 of 34 assertions, 17 per section. Spearman exactly 1.000000 and max
+#   absolute pseudotime difference 0.000e+00 against $SCRATCH/results/per_section_v2.
+#
 # WALLTIME / MEMORY — NOT MEASURED
-#   No sacct record exists for this script; it has never been run. The request
-#   below is reasoned, not measured: the job loads four h5ad files and four
+#   Job 1651931 completed but its elapsed and MaxRSS were never recorded here.
+#   The request below is reasoned, not measured: the job loads four h5ad files and four
 #   results.csv files. The per-section runs are on the order of 10^4 patches, so
 #   the dominant cost is h5ad I/O, not computation. 30 min and 32 G is generous
 #   for that and should be revised down after the first run:

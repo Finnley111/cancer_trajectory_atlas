@@ -12,7 +12,7 @@ been corrected in place:** 2M-2's `pseudotime_std` anomaly was attributed to the
 clamp firing on a disconnected diffusion graph. It is not that — the graph has one
 component, the clamp never fired, and the cause is three sign-discordant roots. See Part 9
 and Part 16 item 6. Corrections and post-August-12 additions are marked **RESOLVED**,
-**ASYMMETRY** or dated inline; nothing was silently rewritten.
+**ASYMMETRY** or dated inline.
 
 ### Which document to read
 
@@ -71,7 +71,7 @@ Sixteen H&E whole-slide images of MCF7 breast-cancer xenografts. Four mice
 (6027 / 6028 / 6029 / 6031), two flanks each (4L / 4R), two serial sections each
 (2M-1 / 2M-2).
 
-> **THEY ARE 8 MATCHED PAIRS.** Added 2026-08-23, and it was missed for a year. Every
+> **THEY ARE 8 MATCHED PAIRS.** Added 2026-08-23. Every
 > mouse-flank combination (a *gland*) contributes exactly one slide to each section:
 > 6027/6028/6029/6031 x 4L/4R. The 16 slides are therefore **8 matched pairs, not 16
 > independent samples**, verified from the per-duct tables by

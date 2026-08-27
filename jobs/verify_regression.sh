@@ -28,9 +28,13 @@
 #   feature extraction, which is computed from the PATCH IMAGES, so every slide
 #   is still decoded and re-segmented. That is the dominant cost.
 #
+# LAST RESULT: ran clean, job 1651931, 2026-08-26, at this revision. Its output
+#   passed verify_compare.sh at 34 of 34 assertions. Note that this script only
+#   PRODUCES the comparison tree; verify_compare.sh is the gate that judges it.
+#
 # WALLTIME / MEMORY — NOT MEASURED
-#   No sacct record is recoverable and logs/ is empty on the machine this was
-#   written on, so nothing below is a measurement.
+#   Job 1651931 completed but its elapsed and MaxRSS were never recorded here, so
+#   nothing below is a measurement. Recover them with the sacct line further down.
 #
 #   The only basis available is jobs/run_per_section.sh's own estimate comment,
 #   which puts "main pipeline x2 (~8 slides, CPU, from cache)" at 2 x 60 min.
