@@ -59,6 +59,20 @@ key) successfully merges the two islands into a connected manifold.
 No-normalization + Harmony works as well as Macenko + Harmony — stain
 normalization adds little once feature-space correction is applied.
 
+> **SUPERSEDED 2026-08-26.** Harmony is **not** in the current configuration. The
+> reference run (`jobs/run_per_section_v2.sh`, producing `$SCRATCH/results/per_section_v2`)
+> passes `--stain-method none --batch-method none`, so no batch correction is applied at
+> all. The project moved to **per-section** analysis instead, which sidesteps the
+> two-island problem by never mixing the sections in one embedding.
+>
+> That change matters scientifically: batch correction removes variance attributable to
+> the grouping key, and fixation is perfectly collinear with section
+> (`KNOWN_ISSUES.md` §2.2), so correcting on `section_number` would have removed the
+> fixation effect along with the artifact. The shrinkage and anisotropy results depend on
+> not having done that.
+>
+> The paragraph above is kept as the record of what was tried and why.
+
 ---
 
 ## Experiment runs (completed)

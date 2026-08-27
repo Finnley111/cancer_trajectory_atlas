@@ -6,12 +6,40 @@
 
 ---
 
+## STATUS AS OF 2026-08-26 — read this before acting on anything below
+
+**This audit describes the code as it stood on 2026-07-24, BEFORE the Task 1
+fixes. Four of its eight ranked findings have since been fixed.** The text below is
+preserved verbatim as the record of what was found and why; it is NOT a description
+of the current pipeline.
+
+| # | Finding | Status now |
+|---|---|---|
+| 1 | Fixed `rgb2hed` matrix across differently-stained sections | **LIVE** — `KNOWN_ISSUES.md` §3.7 |
+| 2 | `h_intensity` over whole patch, not nuclei | **FIXED** (Fix 1c). Masked to `labeled_mask > 0` (`validation/morphological_features.py:141`). The old definition survives as the separate feature `h_intensity_wholepatch`, reported but not voting. |
+| 3 | Silent failure zeroing beyond patch index 4 | **FIXED** (Fix 1a). Failures yield `np.nan`, are counted, and are written to `feature_failures.json`. Both reference sections record **zero** failures, confirmed by the Tier 1 gate. |
+| 4 | `nc_ratio` returns `inf` for fully-nuclear patches | **LIVE** — unchanged at `validation/morphological_features.py:145`. `save_json` converts non-finite to `null`, so an `inf` reaches `validation.json` as `null` and `results.csv` as `inf`. |
+| 5 | `packing_irregularity` returns 0.0 below 3 nuclei | **PARTLY FIXED** (Fix 1d). It now returns `np.nan`, not 0.0, so it is no longer pulled toward the density floor. The structural confound remains: the patches where it is missing are exactly the low-density ones. `KNOWN_ISSUES.md` §3.8. |
+| 6 | Single-angle GLCM for `texture_entropy` | **FIXED** (Fix 1b). Now 4 angles x 3 distances, averaged over the 12 scalars rather than over a pooled GLCM. |
+| 7 | Per-patch Otsu not comparable across patches | **LIVE** — inherent to patch-level processing, unchanged. |
+| 8 | StarDist path unused | **LIVE**, and worse than recorded here: StarDist is not in `requirements.txt`, so `--use-stardist` silently falls back to Otsu. `KNOWN_ISSUES.md` §6.9. |
+
+**The four fixed findings are why `per_section_v2` exists.** `jobs/run_per_section_v2.sh`
+re-ran both sections with them applied, and that tree is the current reference.
+
+**Companion file.** `reports/morphological_features_diagnostics_results.md` was meant to
+hold the measured diagnostics validating these findings. It has never been populated.
+
+---
+
+---
+
 ## Pipeline Invariant — Confirmed
 
-`compute_morphological_features(all_patches, ...)` is called at `run_all.py:592`, inside PHASE 5 ("Morphological Feature Validation"). By that point in `run_all.py`:
+`compute_morphological_features(all_patches, ...)` is called at `run_all.py:668`, inside PHASE 5 ("Morphological Feature Validation"). By that point in `run_all.py`:
 
-- PCA has been fitted and applied (line 481)
-- Harmony / scVI correction has been applied (lines 491–500)
+- PCA has been fitted and applied (`run_all.py:517`)
+- Harmony / scVI correction has been applied (`run_all.py:523-530`)
 - UMAP has been computed (line 502)
 - Leiden clustering has been computed (line 504)
 - DPT pseudotime has been computed (lines 517–565)

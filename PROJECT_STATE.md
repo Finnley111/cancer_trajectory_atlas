@@ -2,7 +2,37 @@
 
 **Written:** 2026-06-03 | **Last updated:** 2026-07-27  
 **Purpose:** Durable reference for any Claude Code session. Read this before making any changes.  
+**SUPERSEDED 2026-08-26 — see the banner below before relying on anything here.**  
 **Status:** Smoke test passed (2026-06-04). `run_full_experiments.sh` (median cap, 20-root DPT) is the canonical full-suite job script — not yet confirmed run to completion on Narval (no results directories from it exist in this checkout; verify on cluster before assuming it ran). A PAGA connectivity check (`analysis/diffusion.py:compute_paga_topology`) is staged in the working tree but **still not committed** — see "Uncommitted changes" below. This update pass (2026-06-22) re-verified every code reference in this document against the current source tree; two stale items were found and corrected (Issue 1, Issue 7 — see "Corrections made in this update" below).
+
+---
+
+---
+
+> # ⚠ SUPERSEDED — last updated 2026-07-27, five weeks before the work that replaced it
+>
+> **Do not use this as the current state of the project.** It is kept as the record of
+> where things stood in July. Several statements below are now materially wrong.
+>
+> **For current state, read in this order:**
+> 1. `docs/KNOWN_ISSUES.md` §5 — the prioritised shortlist
+> 2. `docs/PIPELINE.md` — what the pipeline does now, with verified citations
+> 3. `docs/ANCHOR_VALIDATION_RECORD.md` — the analysis record and results
+> 4. `reports/codebase_inventory.md` — reachability and parameter provenance
+>
+> **What changed since this was written:**
+>
+> | This document says | Actually |
+> |---|---|
+> | "No-normalization + Harmony is the canonical pipeline configuration" | **Wrong now.** The reference run passes `--stain-method none --batch-method none`. **No batch correction at all.** Following this would produce results matching nothing. |
+> | "The cellularity confound test needs to be run" | Run, repeatedly. 2M-1 collapses all five features; 2M-2 all five survive. |
+> | "`run_full_experiments.sh` is the canonical full-suite job script" | Superseded by `jobs/run_per_section_v2.sh`, which produced the reference tree `$SCRATCH/results/per_section_v2`. |
+> | "LOO projection stability ρ ≈ 0.83 across 15 slides, outlier ρ = 0.48" | That is the 16-slide cross-section LOO, which has **matched-pair leakage** (`KNOWN_ISSUES.md` §1.3) and is optimistically biased. |
+> | statements about `run_train_test.py` | That file does not exist and predates the 2026-08-12 cleanup. |
+>
+> **Not reflected here at all:** the Task 1 feature fixes (nan sentinels, 4-angle GLCM,
+> nucleus-masked `h_intensity`), the 8-matched-pairs correction, the fixation-shrinkage
+> and anisotropy results, the correctness audit, and the Tier 1/2/3 verification.
 
 ---
 

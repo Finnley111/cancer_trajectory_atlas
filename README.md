@@ -4,6 +4,29 @@ Morphology analysis and diffusion pseudotime for whole-slide histopathology imag
 
 This pipeline constructs a diffusion-based pseudotime from H&E morphology features across a cohort of whole-slide images. It identifies malignancy-associated morphological trajectories—progression patterns captured by nuclear density, size ratios, and texture—and projects new slides into the learned trajectory space for diagnosis support and biomarker discovery.
 
+## Start here
+
+New to this project? Read in this order. `PROJECT_STATE.md` and `NOTES.md` are historical
+records that carry superseded conclusions; both are banner-flagged, but do not treat them
+as current state.
+
+| | |
+|---|---|
+| **`docs/KNOWN_ISSUES.md` §5** | Prioritised shortlist of what to fix, and why in that order. **Read first.** |
+| `docs/PIPELINE_HANDOFF.md` | Tutorial walkthrough, one patch from glass slide to a row in `results.csv`. |
+| `docs/PIPELINE.md` | Terse reference: every stage, parameter and artifact, with verified `file:line` citations. |
+| `docs/ANCHOR_VALIDATION_RECORD.md` | The analysis record: what was tested, what held, what did not. |
+| `docs/KNOWN_ISSUES.md` §§1-4, 6-9 | Defects and limitations, each labelled **LIVE** or **LATENT**. |
+| `reports/codebase_inventory.md` | Module reachability and parameter provenance: which values were chosen and which are defaults. |
+
+**Reference configuration.** `jobs/run_per_section_v2.sh` produced
+`$SCRATCH/results/per_section_v2`, and that is the tree everything is verified against.
+It runs **per section**, with `--stain-method none --batch-method none` — no stain
+normalization and no batch correction.
+
+**To verify a change did not alter any number:** `jobs/verify_regression.sh` then
+`jobs/verify_compare.sh`. See `docs/PIPELINE.md`.
+
 ## Quick Start
 
 > **How to invoke this project.** Every entry point uses relative imports, so it must be

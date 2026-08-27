@@ -3,9 +3,13 @@
 # setting. Reused for all 6 variants (3 subsets x 2 harmony settings) via
 # submit_paga_runs.sh rather than duplicated into 6 near-identical files.
 #
-# Stain normalization is fixed to 'none' for every variant by design (see
-# PROJECT_STATE.md — no-norm + Harmony is the canonical pipeline config),
-# which is also what makes the shared feature cache safe across all variants.
+# Stain normalization is fixed to 'none' for every variant by design, which is
+# also what makes the shared feature cache safe across all variants.
+#
+# NOTE 2026-08-26: this used to cite PROJECT_STATE.md's "no-norm + Harmony is the
+# canonical pipeline config". That is superseded. The reference configuration is
+# per-section with --batch-method none, i.e. NO batch correction. Stain-method
+# none is still correct; the Harmony half of that claim is not.
 #
 # Within one job this does, in order:
 #   1. Full-cohort run over the chosen slide subset (with/without Harmony).

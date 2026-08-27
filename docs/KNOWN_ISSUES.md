@@ -303,10 +303,12 @@ largely **are** slides.
 Added 2026-08-24. **The decision has been made not to fix any of sections 6 to 8.** This ordering
 exists so the next person can pick up any of it without re-deriving the analysis.
 
-**0. Read `mpp_verification.json` from the Stage D conversion (§6.4b).** Two minutes, no
-compute. It settles whether the timepoint cohort was converted at twice the atlas's
-resolution, which would be an independent and *fixable* explanation for the 100%
-extrapolation result. Cheapest item on this list and the one with the most riding on it.
+**0. DONE 2026-08-26 — and it confirmed the mismatch (§6.4b).** `mpp_verification.json`
+shows identical level-0 MPP for both cohorts (ratio 1.0000), so converting the timepoint
+slides at `--ndpi-scale 1.0` while the atlas used 0.5 put them at **twice the
+magnification**. That is a sufficient, and fixable, explanation for the 100%
+extrapolation result. **Decision needed:** re-convert the timepoint cohort at 0.5 and
+re-run Stage D, or leave the work halted on the staining confound alone.
 
 **1. Quantify the projection clamp (§6.4).** Read-only, needs no GPU, changes nothing, and it
 bears on a conclusion already on record. Count how many projected pseudotime values sit at
@@ -453,9 +455,43 @@ boundary, not the fraction the clip had to move.
 **Affects reported numbers.** It affects how the Stage D projected pseudotime should be described.
 It does not affect the per-section atlas results, which do not project.
 
-### 6.4b Conversion-scale mismatch between the atlas and the timepoint cohort — HYPOTHESIS
+### 6.4b Conversion-scale mismatch between the atlas and the timepoint cohort — CONFIRMED
 
-**Found 2026-08-26, while auditing the fallout of the scale-0.5 discovery.**
+**Found 2026-08-26 while auditing the fallout of the scale-0.5 discovery. CONFIRMED the
+same day by `mpp_verification.json`.**
+
+> **THE TWO COHORTS WERE CONVERTED AT DIFFERENT EFFECTIVE MAGNIFICATIONS.**
+>
+> `mpp_verification.json` reports **identical** level-0 MPP for both cohorts:
+> **0.44130626654898497 um/px**, for all 24 timepoint slides and all 3 sampled atlas
+> slides, `ratio = 1.0000`. The scanner settings were the same.
+>
+> Because the MPP is identical and the conversion scales differ, the resulting PNGs do
+> not share a physical scale:
+>
+> | | 1 PNG pixel | a 112 px patch spans | area |
+> |---|---|---|---|
+> | atlas, `--ndpi-scale 0.5` | 0.88261 um | **98.85 um** | 9772 um² |
+> | timepoint, `--ndpi-scale 1.0` | 0.44131 um | **49.43 um** | 2443 um² |
+>
+> **Timepoint patches show tissue at 2x the magnification and a quarter of the area
+> that Phikon was trained on.**
+>
+> **The MPP check worked; its conclusion did not.** It correctly established that the
+> two cohorts were scanned identically, then chose `ndpi_scale=1.0` on the authority of
+> `jobs/convert_ndpi.sh` and `pipeline_config.py`'s default. Its own `explanation` field
+> says so: *"matching the original pipeline's actual conversion scale (jobs/convert_ndpi.sh,
+> pipeline_config.py default)"*. **Both of those sources were wrong.** Given `ratio = 1.0`,
+> the correct choice was `ndpi_scale=0.5`, to match the atlas.
+>
+> **This is a sufficient mechanism for the Stage D result** that projection was 100%
+> extrapolation on all 29 slides. Patches at twice the magnification embed differently,
+> and would sit off the training manifold regardless of biology.
+>
+> **What this does and does not license.** It does NOT show the timepoint cohort is
+> biologically outside the atlas manifold; that question was never actually tested. It
+> shows the comparison was made between images at different scales. Unlike the staining
+> confound, this is **fixable by re-converting at 0.5** — no new tissue required.
 
 **What.** The atlas cohort was converted at `--ndpi-scale 0.5` (established
 bit-identically, job 1648162). `jobs/run_timepoint_convert_nocrop.sh` converts the
@@ -484,13 +520,6 @@ finer-grained tissue would sit off the training manifold.
 **That is a candidate mechanism for the Stage D result** that projection was **100%
 extrapolation on all 29 slides**. A whole-cohort scale mismatch would produce exactly
 that signature, and it would do so regardless of biology.
-
-**NOT ESTABLISHED. Recorded as a hypothesis, not a finding.** What would settle it:
-
-1. Read `mpp_verification.json` from the Stage D conversion. If the two cohorts' level-0
-   MPP matched, the 2x mismatch is real. If the timepoint slides were scanned at half the
-   atlas magnification, scale 1.0 was correct and there is no mismatch.
-2. Compare a timepoint PNG's pixel-per-micron against an atlas PNG's.
 
 **Consequence either way.** The timepoint work is already halted as
 staining-confounded (`project_timepoint_cohort`). If this mismatch is real it is a
