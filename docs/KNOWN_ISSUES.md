@@ -1,6 +1,6 @@
 # KNOWN_ISSUES.md — defects and limitations, with scope
 
-**Current as of 2026-08-26.** Each entry states what the issue is, why it matters, how it was
+**Current as of 2026-08-27.** Each entry states what the issue is, why it matters, how it was
 found, **whether it affects a reported number**, and what fixing it would require.
 
 **Sections 5 to 9 were added by the 2026-08-24 correctness audit and extended on 2026-08-26** and record defects found by
@@ -17,11 +17,15 @@ merely suspected, the measurement is given.
 and how each was caught. §5 there lists statistics that should not be trusted. This file is
 about defects that are still live in the code and the design.
 
+**The `[PAPER]` tag** marks an issue the manuscript draft currently gets wrong or omits, as
+opposed to one that only affects the code. Tagged headings are listed with the specific passage
+to change in **§10**, which is the checklist to work from when revising the draft.
+
 ---
 
 ## 1. Statistical mis-specification
 
-### 1.1 The 16 slides are 8 matched pairs — CORRECTED for the between-section comparison
+### 1.1 [PAPER] The 16 slides are 8 matched pairs — CORRECTED for the between-section comparison
 
 **What.** Every mouse-flank gland contributes one slide to 2M-1 (Carnoy's) and one to 2M-2
 (PFA). The 16 slides are therefore 8 matched pairs, not 16 independent samples. This was
@@ -48,7 +52,7 @@ audit surfaced, not unfixed parts of this one.
 `duct_white_fraction.py:259` are **unaffected**: within one section no two slides share a gland,
 so the slide *is* the independent unit there.
 
-### 1.2 Patch-level global shuffles ignore slide nesting
+### 1.2 [PAPER] Patch-level global shuffles ignore slide nesting
 
 **What.** Two permutation tests shuffle at the level of individual patches, with no slide
 structure preserved:
@@ -165,7 +169,7 @@ magnitude.
 
 ---
 
-### 2.5 The "5x magnification" label is wrong by about a factor of two
+### 2.5 [PAPER] The "5x magnification" label is wrong by about a factor of two
 
 **What.** `mpp_verification.json` reports level-0 MPP of 0.44130626654898497 um/px,
 identical across all 24 timepoint and all 3 sampled atlas slides. That is about 20x. After
@@ -197,7 +201,7 @@ stated objective before the manuscript names a magnification.
 
 ## 3. Pipeline defects
 
-### 3.1 Root-selection circularity
+### 3.1 [PAPER] Root-selection circularity
 
 `nuclear_density` is simultaneously the DPT root selector (`analysis/diffusion.py:303-317`), one
 of the six validation features (`run_all.py:702`), and the covariate partialled out in the
@@ -317,7 +321,7 @@ all sitting at density 0.0 with none inside a duct, and with zero-density patche
 of 2M-2 against 0.133% of 2M-1 (**1.56×**, against a 1.64× duct-area ratio). **Suggestive only:**
 n = 21 and n = 11 are far too small, and the ratio coincidence could easily be chance.
 
-### 4.2 Are the two halves of a gland equivalent tissue?
+### 4.2 [PAPER] Are the two halves of a gland equivalent tissue?
 
 The paired correction fixes the *unit of analysis*. It does not establish that the two pieces of
 each gland sample comparable tissue. If they sample different regions, within-gland regional
@@ -779,3 +783,33 @@ did not touch source.
 | §6.1, §6.2, §6.4, §6.5 | as cited in each entry | **No** |
 
 §2.3, §3.2, §3.3, §3.5 and §3.8 are all reflected at their sites already.
+
+---
+
+## 10. [PAPER] Manuscript revision checklist
+
+Read against the draft on 2026-08-27. Two kinds of problem: text that describes the pre-fix
+pipeline, and claims the design does not support. Items 1 to 5 are wrong as written. Items 6 to 8
+are omissions a reviewer would raise.
+
+**Wrong as written**
+
+| # | Where in the draft | What it says | What the code and design say |
+|---|---|---|---|
+| 1 | Summary, Introduction, Dataset, Methods, Results | The sections "sample different regions" and are "not serial sections of the same tissue", giving a compound confound of anatomy with staining reagent | The Methods says two paragraphs later that each gland was **bisected**. One gland, split, two fixations, so anatomy is matched at gland level and the confound is fixation alone. §1.1, §4.2. The residual question is whether the two halves are equivalent tissue, which is narrower than the draft claims and is what §4.2 asks. |
+| 2 | Results Overview, Methods | Patches are at **5x** magnification | About **10x**. Level-0 MPP is 0.4413 um/px and `--ndpi-scale 0.5` gives 0.8826 um/px. A genuine 5x needs scale 0.22. §2.5. |
+| 3 | Methods | `h_intensity` is measured "across the full patch area, not restricted to the nuclear region" | That is the pre-fix definition. Fix 1c made `h_intensity` nuclear-masked; the whole-patch value survives under the separate name `h_intensity_wholepatch`. `validation/morphological_features.py:333`, `375-376`. The draft describes the legacy variant under the current name. |
+| 4 | Methods | Texture entropy is computed "at 0 degree orientation" | Also pre-fix. Fix 1b made it four angles (0, pi/4, pi/2, 3pi/4) crossed with three distances, averaged. `validation/morphological_features.py:64-66`, `154-177`. |
+| 5 | Figure 6, Table 2 | `h_intensity` at +0.40 and +0.04 | Those are pre-fix numbers. The masked values are +0.117 for Carnoy's and +0.405 for PFA, which is close to a swap between the two sections rather than a small shift. **Every figure and table needs checking against the v2 outputs**, not just this one, since the same fixes touched all six validation features. |
+
+**Omissions**
+
+| # | What is missing | Why it matters |
+|---|---|---|
+| 6 | Root-selection circularity | `nuclear_density` selects the DPT roots, is one of the six validation features, and is the covariate partialled out in the cellularity analysis. The "one axis tracks cellularity" result rests on all three roles at once and the draft mentions none of them. §3.1, and §3.2 for how an acellular patch is preferentially selected. |
+| 7 | The paired design is described but not used | Methods correctly reports 8 matched glands and uses a paired Wilcoxon for annotation counts. Every other analysis treats the 16 slides as independent. The inconsistency is visible inside the document. §1.1, §1.2. |
+| 8 | The 0.6 threshold in Figure 5 | Given as "for example 0.6" and never defined in Methods. Either define it or state that the figure is illustrative and the conclusion does not depend on the cut. |
+
+**Only item 5 needs anything rerun.** Items 2, 3 and 4 are settled facts about the code, so the
+correction is a rewrite. Items 1, 6, 7 and 8 are text. Item 5 needs the v2 numbers pulled from
+`$SCRATCH/results/per_section_v2` and the affected figures regenerated.
